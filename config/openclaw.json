@@ -1,0 +1,108 @@
+{
+  "gateway": {
+    "mode": "local"
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "./workspace",
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-6",
+        "fallbacks": ["anthropic/claude-haiku-4-5-20251001"]
+      }
+    }
+  },
+  "tokenOptimization": {
+    "enabled": true,
+    "libraryPath": "src/cyberclaw_core/toon",
+    "toonSerializationDefault": true,
+    "sessionTracking": true
+  },
+  "security": {
+    "mode": "hobby"
+  },
+  "mcpServers": {
+    "nmap-scan": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/nmap-scan/server.py"],
+      "env": {}
+    },
+    "device-config": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/device-config/device_config_server.py"],
+      "env": {
+        "GNMI_TARGETS": "${GNMI_TARGETS}",
+        "GNMI_DEFAULT_PORT": "${GNMI_DEFAULT_PORT:-6030}"
+      }
+    },
+    "simulation": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/simulation/gns3_mcp_server.py"],
+      "env": {
+        "GNS3_URL": "${GNS3_SERVER_URL}",
+        "GNS3_USER": "${GNS3_USER}",
+        "GNS3_PASSWORD": "${GNS3_PASSWORD}"
+      }
+    },
+    "syslog-collector": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/syslog-collector/syslog_mcp_server.py"],
+      "env": {
+        "SYSLOG_PORT": "${SYSLOG_PORT:-514}",
+        "SYSLOG_PROTOCOL": "${SYSLOG_PROTOCOL:-udp}"
+      }
+    },
+    "snmp-collector": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/snmp-collector/snmptrap_mcp_server.py"],
+      "env": {
+        "SNMP_PORT": "${SNMP_PORT:-162}",
+        "SNMP_COMMUNITY": "${SNMP_COMMUNITY:-public}"
+      }
+    },
+    "cve-intel": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/cve-intel/server.py"],
+      "env": {
+        "NVD_API_KEY": "${NVD_API_KEY}"
+      }
+    },
+    "security-baseline": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/security-baseline/server.py"],
+      "env": {}
+    },
+    "flow-analyzer": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/flow-analyzer/ipfix_mcp_server.py"],
+      "env": {
+        "IPFIX_PORT": "${IPFIX_PORT:-2055}"
+      }
+    },
+    "traffic-analyzer": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/traffic-analyzer/server.py"],
+      "env": {
+        "TSHARK_PATH": "${TSHARK_PATH:-tshark}"
+      }
+    },
+    "auto-response": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/auto-response/server.py"],
+      "env": {
+        "SWITCH_IP": "${SWITCH_IP}",
+        "SWITCH_SSH_USER": "${SWITCH_SSH_USER}",
+        "SWITCH_SSH_PASS": "${SWITCH_SSH_PASS}"
+      }
+    },
+    "config-audit": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/config-audit/server.py"],
+      "env": {}
+    },
+    "attack-timeline": {
+      "command": "python3",
+      "args": ["-u", "mcp-servers/attack-timeline/server.py"],
+      "env": {}
+    }
+  }
+}
