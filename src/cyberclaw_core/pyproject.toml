@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyberclaw-core"
+version = "0.1.0"
+description = "CyberClaw shared library — TOON serialization, security models, MCP base"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "mcp>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
