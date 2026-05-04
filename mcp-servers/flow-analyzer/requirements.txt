@@ -1,0 +1,18 @@
+# IPFIX/NetFlow MCP Server Dependencies
+# Python 3.10+ required
+
+# MCP Framework
+mcp>=1.0.0
+
+# NetFlow/IPFIX Parsing
+netflow>=0.12.0
+
+# Data Validation
+pydantic>=2.0.0
+
+# GAIT Audit Logging (if available)
+# gait-mcp>=0.1.0
+
+# Development/Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
