@@ -1487,9 +1487,153 @@ def gns3_delete_snapshot(project_id: str, snapshot_id: str) -> str:
 
 
 # =============================================================================
+# CyberClaw IoT Topology Templates
+# =============================================================================
+
+IOT_TOPOLOGY_TEMPLATES = {
+    "iot-lab-basic": {
+        "name": "IoT 安全实验室 (基础版)",
+        "description": "15 台设备: 2 路由器 + 1 核心交换机 + 4 摄像头 + 2 传感器 + 2 智能插座 + 1 管理PC + 1 Kali + 1 文件服务器 + 1 网关",
+        "nodes": [
+            {"template": "cisco-ios-router", "name": "Router-1", "x": -200, "y": -150},
+            {"template": "cisco-ios-router", "name": "Router-2", "x": 200, "y": -150},
+            {"template": "cisco-ios-switch", "name": "Switch-Core", "x": 0, "y": 0},
+            {"template": "iot-camera", "name": "Camera-1", "x": -150, "y": 150},
+            {"template": "iot-camera", "name": "Camera-2", "x": -50, "y": 180},
+            {"template": "iot-camera", "name": "Camera-3", "x": 50, "y": 180},
+            {"template": "iot-camera", "name": "Camera-4", "x": 150, "y": 150},
+            {"template": "iot-sensor", "name": "TempSensor-1", "x": -100, "y": 250},
+            {"template": "iot-sensor", "name": "PressureSensor-2", "x": 100, "y": 250},
+            {"template": "iot-plug", "name": "SmartPlug-1", "x": -200, "y": 100},
+            {"template": "iot-plug", "name": "SmartPlug-2", "x": 200, "y": 100},
+            {"template": "vpc", "name": "Admin-PC", "x": 0, "y": -200},
+            {"template": "kali-linux", "name": "Kali-Attacker", "x": -350, "y": -250},
+            {"template": "linux-micro", "name": "FileServer", "x": 0, "y": 100},
+            {"template": "iot-gateway", "name": "IoT-Gateway", "x": 0, "y": -60},
+        ],
+        "links": [
+            ("Router-1", "Switch-Core"), ("Router-2", "Switch-Core"),
+            ("Switch-Core", "Camera-1"), ("Switch-Core", "Camera-2"),
+            ("Switch-Core", "Camera-3"), ("Switch-Core", "Camera-4"),
+            ("Switch-Core", "TempSensor-1"), ("Switch-Core", "PressureSensor-2"),
+            ("Switch-Core", "SmartPlug-1"), ("Switch-Core", "SmartPlug-2"),
+            ("Switch-Core", "Admin-PC"), ("Router-1", "Kali-Attacker"),
+            ("Switch-Core", "FileServer"), ("Switch-Core", "IoT-Gateway"),
+            ("Router-1", "Router-2"),
+        ],
+    },
+    "iot-lab-mirai-demo": {
+        "name": "Mirai 攻防演示拓扑",
+        "description": "精简版: 1 路由器 + 1 交换机 + 2 摄像头(Hikvision 默认密码) + 1 Kali 攻击机",
+        "nodes": [
+            {"template": "cisco-ios-router", "name": "Router", "x": 0, "y": -150},
+            {"template": "cisco-ios-switch", "name": "Switch", "x": 0, "y": 0},
+            {"template": "iot-camera", "name": "Camera-1", "x": -100, "y": 150},
+            {"template": "iot-camera", "name": "Camera-2", "x": 100, "y": 150},
+            {"template": "kali-linux", "name": "Kali", "x": -250, "y": -150},
+        ],
+        "links": [
+            ("Router", "Switch"), ("Switch", "Camera-1"), ("Switch", "Camera-2"), ("Router", "Kali"),
+        ],
+    },
+}
+
+
+@mcp.tool()
+@with_gait_logging("gns3_list_iot_templates")
+def gns3_list_iot_templates() -> str:
+    """List available CyberClaw IoT topology templates."""
+    templates = []
+    for tid, tpl in IOT_TOPOLOGY_TEMPLATES.items():
+        templates.append({
+            "id": tid, "name": tpl["name"], "description": tpl["description"],
+            "nodes": len(tpl["nodes"]), "links": len(tpl["links"]),
+        })
+    return success_response(templates, "IoT topology templates")
+
+
+@mcp.tool()
+@with_gait_logging("gns3_deploy_iot_topology")
+def gns3_deploy_iot_topology(template_id: str = "iot-lab-basic", project_name: str = "") -> str:
+    """Deploy a pre-configured IoT topology from template.
+
+    Creates a GNS3 project with all nodes and links defined in the template.
+
+    Args:
+        template_id: Template ID: iot-lab-basic or iot-lab-mirai-demo.
+        project_name: Custom project name. Empty = use template name.
+    """
+    tpl = IOT_TOPOLOGY_TEMPLATES.get(template_id)
+    if not tpl:
+        return error_response(GNS3Error(f"Template '{template_id}' not found. Available: {list(IOT_TOPOLOGY_TEMPLATES.keys())}"))
+
+    try:
+        c = get_client()
+        name = project_name or tpl["name"]
+
+        # Create project
+        resp = c.post("/v3/projects", json={"name": name})
+        project = handle_gns3_response(resp, [200, 201])
+        pid = project["project_id"]
+
+        created_nodes = {}
+        errors = []
+
+        for node_def in tpl["nodes"]:
+            try:
+                tmpl_id, tmpl_name = resolve_template_id(c, node_def["template"])
+                resp = c.post(f"/v3/projects/{pid}/templates/{tmpl_id}", json={
+                    "name": node_def["name"], "x": node_def["x"], "y": node_def["y"],
+                })
+                node = handle_gns3_response(resp, [200, 201])
+                created_nodes[node_def["name"]] = node.get("node_id")
+            except Exception as e:
+                errors.append(f"Node '{node_def['name']}': {e}")
+
+        for src_name, dst_name in tpl["links"]:
+            src_id = created_nodes.get(src_name)
+            dst_id = created_nodes.get(dst_name)
+            if not src_id or not dst_id:
+                errors.append(f"Link {src_name} → {dst_name}: node(s) not found")
+                continue
+            try:
+                resp_src = c.get(f"/v3/projects/{pid}/nodes/{src_id}")
+                src_node = handle_gns3_response(resp_src, [200])
+                resp_dst = c.get(f"/v3/projects/{pid}/nodes/{dst_id}")
+                dst_node = handle_gns3_response(resp_dst, [200])
+
+                src_ports = src_node.get("ports", [])
+                dst_ports = dst_node.get("ports", [])
+                if not src_ports or not dst_ports:
+                    errors.append(f"Link {src_name} → {dst_name}: no ports available")
+                    continue
+
+                c.post(f"/v3/projects/{pid}/links", json={
+                    "nodes": [
+                        {"node_id": src_id, "adapter_number": src_ports[0].get("adapter_number", 0),
+                         "port_number": src_ports[0].get("port_number", 0)},
+                        {"node_id": dst_id, "adapter_number": dst_ports[0].get("adapter_number", 0),
+                         "port_number": dst_ports[0].get("port_number", 0)},
+                    ]
+                })
+            except Exception as e:
+                errors.append(f"Link {src_name} → {dst_name}: {e}")
+
+        return success_response({
+            "project_id": pid, "project_name": name,
+            "nodes_created": len(created_nodes), "nodes": created_nodes,
+            "template": template_id, "errors": errors,
+        }, f"IoT topology '{name}' deployed")
+    except GNS3Error as e:
+        return error_response(e)
+    except Exception as e:
+        return error_response(e)
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
 if __name__ == "__main__":
-    logger.info(f"Starting GNS3 MCP Server (connecting to {GNS3_URL})")
+    logger.info(f"Starting CyberClaw Simulation MCP (GNS3 at {GNS3_URL})")
     mcp.run()

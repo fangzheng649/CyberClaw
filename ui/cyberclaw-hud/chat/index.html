@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CyberClaw — CyberAgent 对话</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Top Navigation -->
+      <header class="topbar">
+        <div class="topbar-brand">
+          <span class="brand">CYBER<span class="brand-accent">CLAW</span></span>
+          <span class="brand-sub">CyberAgent</span>
+        </div>
+        <nav class="tabs">
+          <button class="tab active" data-tab="chat">对话</button>
+          <button class="tab" data-tab="reports">报告</button>
+          <button class="tab" data-tab="ops">操作</button>
+          <button class="tab" data-tab="history">历史</button>
+        </nav>
+        <button class="hud-link" id="btn-open-hud" title="打开 3D 安全 HUD">
+          <span class="hud-link-icon">⬡</span> 3D HUD
+        </button>
+      </header>
+
+      <!-- Tab: Chat -->
+      <main class="tab-content active" id="tab-chat">
+        <div class="chat-messages" id="chat-messages">
+          <div class="chat-welcome">
+            <div class="welcome-icon">⬡</div>
+            <h2>CyberAgent 就绪</h2>
+            <p>IoT 安全智能助手已上线。你可以用自然语言提问或下达安全指令。</p>
+            <div class="quick-actions">
+              <button class="quick-btn" data-prompt="帮我检查网络中所有 IoT 设备的安全状态">扫描网络安全状态</button>
+              <button class="quick-btn" data-prompt="分析当前有哪些安全漏洞">分析安全漏洞</button>
+              <button class="quick-btn" data-prompt="生成今天的安全巡检报告">生成巡检报告</button>
+              <button class="quick-btn" data-prompt="回放最近的攻击过程">攻击复盘</button>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- Tab: Reports -->
+      <main class="tab-content" id="tab-reports">
+        <div class="reports-layout">
+          <div class="reports-sidebar">
+            <div class="report-filters">
+              <button class="filter active" data-filter="all">全部</button>
+              <button class="filter" data-filter="scan">巡检</button>
+              <button class="filter" data-filter="attack">复盘</button>
+              <button class="filter" data-filter="compliance">合规</button>
+            </div>
+            <div class="report-list" id="report-list">
+              <div class="empty-state">暂无报告，通过对话生成</div>
+            </div>
+          </div>
+          <div class="report-detail" id="report-detail">
+            <div class="empty-state">选择左侧报告查看详情</div>
+          </div>
+        </div>
+      </main>
+
+      <!-- Tab: Operations -->
+      <main class="tab-content" id="tab-ops">
+        <div class="ops-layout">
+          <div class="ops-left">
+            <section class="ops-section">
+              <h3>快捷操作</h3>
+              <div class="ops-grid">
+                <button class="ops-btn scan" data-prompt="扫描网络中的所有设备">
+                  <span class="ops-icon">📡</span>全网扫描
+                </button>
+                <button class="ops-btn vuln" data-prompt="分析网络漏洞">
+                  <span class="ops-icon">🔍</span>漏洞检测
+                </button>
+                <button class="ops-btn isolate" data-prompt="查看需要隔离的设备">
+                  <span class="ops-icon">🛡️</span>设备隔离
+                </button>
+                <button class="ops-btn report" data-prompt="生成安全报告">
+                  <span class="ops-icon">📊</span>生成报告
+                </button>
+              </div>
+            </section>
+            <section class="ops-section">
+              <h3>MCP 服务器</h3>
+              <div class="mcp-list" id="mcp-list">
+                <!-- Populated by JS -->
+              </div>
+            </section>
+          </div>
+          <div class="ops-right">
+            <section class="ops-section">
+              <h3>可用 Skills</h3>
+              <div class="skills-list" id="skills-list">
+                <!-- Populated by JS -->
+              </div>
+            </section>
+            <section class="ops-section flex-1">
+              <h3>操作历史</h3>
+              <div class="op-history" id="op-history">
+                <div class="empty-state">暂无操作记录</div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+
+      <!-- Tab: History -->
+      <main class="tab-content" id="tab-history">
+        <div class="history-layout">
+          <div class="history-sidebar">
+            <div class="history-search">
+              <input type="text" class="search-input" placeholder="搜索历史对话..." id="history-search" />
+            </div>
+            <div class="session-list" id="session-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+          <div class="history-detail" id="history-detail">
+            <div class="empty-state">选择左侧会话查看详情</div>
+          </div>
+        </div>
+      </main>
+
+      <!-- Fixed Input Bar -->
+      <footer class="input-bar">
+        <div class="input-wrapper">
+          <input type="text" id="chat-input" class="chat-input" placeholder="输入安全问题或指令..." autocomplete="off" />
+          <button id="btn-send" class="btn-send">发送</button>
+        </div>
+      </footer>
+    </div>
+
+    <script src="main.js" type="module"></script>
+  </body>
+</html>

@@ -810,6 +810,101 @@ def gnmi_list_targets() -> str:
 
 
 # ---------------------------------------------------------------------------
+# CyberClaw SSH/CLI Extension
+# ---------------------------------------------------------------------------
+
+_SSH_SESSIONS: dict[str, dict] = {}
+
+
+def _get_ssh_config() -> dict:
+    return {
+        "switch_ip": os.getenv("SWITCH_IP", "10.0.0.1"),
+        "switch_user": os.getenv("SWITCH_SSH_USER", "admin"),
+        "switch_pass": os.getenv("SWITCH_SSH_PASS", ""),
+        "router1_ip": os.getenv("ROUTER1_IP", "10.0.1.1"),
+        "router2_ip": os.getenv("ROUTER2_IP", "10.0.2.1"),
+    }
+
+
+@mcp.tool()
+async def ssh_run_command(device_ip: str, command: str, username: str = "", password: str = "") -> str:
+    """Execute a CLI command on a device via SSH.
+
+    Supports Cisco IOS, Huawei VRP, and Linux shell commands.
+    Use for: show running-config, show interface, ping, etc.
+
+    Args:
+        device_ip: Target device IP address.
+        command: CLI command to execute.
+        username: SSH username. Empty = use env default.
+        password: SSH password. Empty = use env default.
+    """
+    import asyncio
+    cfg = _get_ssh_config()
+    user = username or cfg["switch_user"]
+    pwd = password or cfg["switch_pass"]
+
+    try:
+        import paramiko
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(device_ip, port=22, username=user, password=pwd, timeout=10, look_for_keys=False)
+        stdin, stdout, stderr = client.exec_command(command, timeout=30)
+        output = stdout.read().decode("utf-8", errors="replace")
+        error = stderr.read().decode("utf-8", errors="replace")
+        client.close()
+
+        return json.dumps({
+            "device": device_ip, "command": command, "output": output,
+            "error": error if error else None, "status": "success",
+        }, ensure_ascii=False, indent=2)
+    except ImportError:
+        # Mock mode when paramiko not available
+        return json.dumps({
+            "device": device_ip, "command": command, "status": "mock",
+            "output": _mock_cli_output(device_ip, command),
+        }, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"device": device_ip, "command": command, "status": "error", "error": str(e)},
+                          ensure_ascii=False)
+
+
+def _mock_cli_output(device_ip: str, command: str) -> str:
+    cmd = command.strip().lower()
+    if "show running" in cmd or "show run" in cmd:
+        return f"hostname Switch-Core\nenable secret 5 $1$xyz\ninterface Gi0/1\n switchport access vlan 10\nline vty 0 4\n transport input ssh"
+    if "show interface" in cmd:
+        return "GigabitEthernet0/1 is up, line protocol is up\n  5 minute input rate 12000 bits/sec\n  5 minute output rate 8000 bits/sec"
+    if "show version" in cmd:
+        return "Cisco IOS Software, C2960 Software (C2960-LANBASEK9-M), Version 15.2(4)E7"
+    return f"[mock] Command '{command}' on {device_ip}"
+
+
+@mcp.tool()
+async def ssh_get_config(device_ip: str) -> str:
+    """Retrieve the running configuration of a network device via SSH.
+
+    Args:
+        device_ip: Target device IP address.
+    """
+    return await ssh_run_command(device_ip, "show running-config")
+
+
+@mcp.tool()
+async def ssh_configure(device_ip: str, commands: str) -> str:
+    """Apply configuration commands to a device via SSH (configure terminal mode).
+
+    WARNING: This is a write operation. Requires ITSM change approval.
+
+    Args:
+        device_ip: Target device IP.
+        commands: Configuration commands (newline-separated).
+    """
+    full_cmd = f"configure terminal\n{commands}\nend"
+    return await ssh_run_command(device_ip, full_cmd)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

@@ -1,0 +1,78 @@
+{
+  "hikvision": {
+    "prefixes": ["c0:56:e3", "44:19:b6", "54:e4:bd", "e0:50:8b", "68:05:ca", "b0:c5:ca", "40:2c:76"],
+    "type": "camera", "name": "Hikvision"
+  },
+  "dahua": {
+    "prefixes": ["3c:ef:8c", "40:2c:76", "a0:bd:1d", "e0:50:8b", "48:34:29"],
+    "type": "camera", "name": "Dahua"
+  },
+  "axis": {
+    "prefixes": ["00:40:8c", "ac:cc:8e"],
+    "type": "camera", "name": "Axis"
+  },
+  "siemens": {
+    "prefixes": ["00:00:39", "00:01:a3", "00:0c:29", "00:1b:1b"],
+    "type": "sensor", "name": "Siemens"
+  },
+  "honeywell": {
+    "prefixes": ["00:00:96", "00:0b:28", "00:11:0a", "70:b3:d5"],
+    "type": "sensor", "name": "Honeywell"
+  },
+  "schneider": {
+    "prefixes": ["00:80:f4", "00:e0:b0", "00:21:28"],
+    "type": "sensor", "name": "Schneider Electric"
+  },
+  "tp-link": {
+    "prefixes": ["50:c7:bf", "60:32:b1", "ac:d2:48", "b0:be:76", "c0:61:18", "b0:4e:26"],
+    "type": "plug", "name": "TP-Link"
+  },
+  "tuya": {
+    "prefixes": ["ac:cf:85", "dc:4f:22", "7c:df:a1", "84:0d:8e"],
+    "type": "iot", "name": "Tuya"
+  },
+  "espressif": {
+    "prefixes": ["24:0a:c4", "30:ae:a4", "a4:cf:12", "d8:f1:5b", "24:6f:28", "7c:df:a1"],
+    "type": "iot", "name": "Espressif"
+  },
+  "xiaomi": {
+    "prefixes": ["78:11:dc", "28:e3:1f", "50:ec:50", "dc:a6:32", "0c:1d:af"],
+    "type": "iot", "name": "Xiaomi"
+  },
+  "broadlink": {
+    "prefixes": ["e8:70:72", "78:0f:77", "24:df:a7", "34:ea:34"],
+    "type": "iot", "name": "BroadLink"
+  },
+  "shenzhen": {
+    "prefixes": ["dc:55:87", "b8:27:eb", "00:e0:4c"],
+    "type": "iot", "name": "Shenzhen"
+  },
+  "raspberry": {
+    "prefixes": ["b8:27:eb", "dc:a6:32", "e4:5f:01"],
+    "type": "pc", "name": "Raspberry Pi"
+  },
+  "cisco": {
+    "prefixes": ["00:1b:54", "00:25:45", "00:26:0b", "f8:c2:88"],
+    "type": "switch", "name": "Cisco"
+  },
+  "huawei": {
+    "prefixes": ["00:18:82", "00:e0:fc", "48:46:fb", "a8:6d:a3", "cc:96:a0"],
+    "type": "switch", "name": "Huawei"
+  },
+  "eclipse_mosquitto": {
+    "prefixes": [],
+    "type": "server", "name": "Eclipse Mosquitto"
+  },
+  "apple": {
+    "prefixes": ["14:91:82", "3c:22:fb", "f8:ff:c2", "ac:bc:32", "ac:cf:85"],
+    "type": "phone", "name": "Apple"
+  },
+  "google": {
+    "prefixes": ["f0:2f:74", "20:df:b9", "a4:77:33"],
+    "type": "iot", "name": "Google"
+  },
+  "amazon": {
+    "prefixes": ["74:6d:e4", "fc:65:de", "40:b4:cd"],
+    "type": "iot", "name": "Amazon"
+  }
+}

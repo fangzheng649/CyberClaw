@@ -2,6 +2,11 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,8 +15,14 @@ from .api.topology import router as topology_router
 from .api.security import router as security_router
 from .api.scenario import router as scenario_router, set_scenario_service
 from .api.chat import router as chat_router
-from .services.topology_service import get_topology, DEVICES, LINKS
+from .api.tools import router as tools_router
+from .api.discovery import router as discovery_router
+from .services.topology_service import get_topology
 from .services.scenario_service import ScenarioService
+from .services.tool_broadcast_service import set_broadcast as set_tool_broadcast
+from .services.collector_service import get_receiver
+from .services.snmp_service import get_snmp_service
+from .services.mqtt_service import get_mqtt_service
 from .websocket.events import ConnectionManager
 
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +32,8 @@ ws_manager = ConnectionManager()
 scenario_service = ScenarioService()
 
 topology = get_topology()
-scenario_service.set_topology(DEVICES, LINKS)
+device_count = len(topology.devices)
+scenario_service.set_topology(topology.devices, topology.links)
 
 
 async def broadcast_event(event_data: dict) -> None:
@@ -46,12 +58,20 @@ async def heartbeat_loop():
                 "stats": stats,
                 "scenarioRunning": scenario_service.running,
                 "step": scenario_service.step,
-                "totalSteps": 15,
+                "totalSteps": device_count,
             })
 
 
 scenario_service.set_broadcast(broadcast_event)
 set_scenario_service(scenario_service)
+set_tool_broadcast(broadcast_event)
+
+# Wire collector service broadcast
+get_receiver().set_broadcast(broadcast_event)
+
+# Wire SNMP and MQTT service broadcasts
+get_snmp_service().set_broadcast(broadcast_event)
+get_mqtt_service().set_broadcast(broadcast_event)
 
 
 @asynccontextmanager
@@ -77,6 +97,8 @@ app.include_router(topology_router)
 app.include_router(security_router)
 app.include_router(scenario_router)
 app.include_router(chat_router)
+app.include_router(tools_router)
+app.include_router(discovery_router)
 
 
 @app.websocket("/ws")

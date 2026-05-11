@@ -1,0 +1,90 @@
+#!/bin/bash
+export PATH=/usr/local/bin:/usr/bin:/bin:/home/fz/.local/bin
+
+# Stop existing GNS3-managed containers
+echo "=== Stopping old containers ==="
+docker stop $(docker ps -q --filter "ancestor=cyberclaw/camera") 2>/dev/null
+docker stop $(docker ps -q --filter "ancestor=cyberclaw/sensor") 2>/dev/null
+docker stop $(docker ps -q --filter "ancestor=cyberclaw/plug") 2>/dev/null
+docker stop $(docker ps -q --filter "ancestor=cyberclaw/gateway") 2>/dev/null
+docker stop $(docker ps -q --filter "ancestor=cyberclaw/scanner") 2>/dev/null
+docker stop $(docker ps -q --filter "ancestor=cyberclaw/mqtt-broker") 2>/dev/null
+
+# Create Docker network
+echo "=== Creating IoT network ==="
+docker network create --driver bridge --subnet 10.0.0.0/24 iot-lab 2>/dev/null || echo "Network already exists"
+
+echo "=== Starting IoT containers ==="
+
+# Cameras
+for i in 1 2 3 4; do
+  case $i in
+    1) name="Camera-HK-1"; ip="10.0.0.11"; port=8081 ;;
+    2) name="Camera-HK-2"; ip="10.0.0.12"; port=8082 ;;
+    3) name="Camera-DH-1"; ip="10.0.0.13"; port=8083 ;;
+    4) name="Camera-DH-2"; ip="10.0.0.14"; port=8084 ;;
+  esac
+  docker run -d --name "$name" --hostname "$name" \
+    --network iot-lab --ip "$ip" \
+    -p $port:80 \
+    cyberclaw/camera:latest 2>/dev/null && echo "  Started $name at $ip" || echo "  $name already exists"
+done
+
+# Sensors
+for i in 1 2; do
+  case $i in
+    1) name="TempSensor-1"; ip="10.0.0.21"; port=8091 ;;
+    2) name="PressureSensor-2"; ip="10.0.0.22"; port=8092 ;;
+  esac
+  docker run -d --name "$name" --hostname "$name" \
+    --network iot-lab --ip "$ip" \
+    -p $port:80 \
+    cyberclaw/sensor:latest 2>/dev/null && echo "  Started $name at $ip" || echo "  $name already exists"
+done
+
+# Smart plugs
+for i in 1 2; do
+  case $i in
+    1) name="SmartPlug-1"; ip="10.0.0.31"; port=8071 ;;
+    2) name="SmartPlug-2"; ip="10.0.0.32"; port=8072 ;;
+  esac
+  docker run -d --name "$name" --hostname "$name" \
+    --network iot-lab --ip "$ip" \
+    -p $port:80 \
+    cyberclaw/plug:latest 2>/dev/null && echo "  Started $name at $ip" || echo "  $name already exists"
+done
+
+# Gateway
+docker run -d --name "IoT-Gateway" --hostname "IoT-Gateway" \
+  --network iot-lab --ip "10.0.0.1" \
+  -p 8060:80 \
+  cyberclaw/gateway:latest 2>/dev/null && echo "  Started IoT-Gateway at 10.0.0.1" || echo "  IoT-Gateway already exists"
+
+# MQTT Broker
+docker run -d --name "MQTT-Broker" --hostname "MQTT-Broker" \
+  --network iot-lab --ip "10.0.0.50" \
+  -p 1883:1883 \
+  cyberclaw/mqtt-broker:latest 2>/dev/null && echo "  Started MQTT-Broker at 10.0.0.50" || echo "  MQTT-Broker already exists"
+
+# Scanner
+docker run -d --name "Nmap-Scanner" --hostname "Nmap-Scanner" \
+  --network iot-lab --ip "10.0.0.100" \
+  --cap-add=NET_ADMIN \
+  cyberclaw/scanner:latest 2>/dev/null && echo "  Started Nmap-Scanner at 10.0.0.100" || echo "  Nmap-Scanner already exists"
+
+echo ""
+echo "Waiting 5s..."
+sleep 5
+
+echo ""
+echo "=== Container Status ==="
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" --filter "network=iot-lab"
+
+echo ""
+echo "=== Ping Test from Scanner ==="
+docker exec Nmap-Scanner ping -c 2 -W 1 10.0.0.11 2>&1 | tail -2
+docker exec Nmap-Scanner ping -c 2 -W 1 10.0.0.50 2>&1 | tail -2
+
+echo ""
+echo "=== Nmap Network Scan ==="
+docker exec Nmap-Scanner nmap -sn 10.0.0.0/24 2>&1

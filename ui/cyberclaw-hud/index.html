@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CyberClaw — IoT Security HUD</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="scene-root"></div>
+      <div class="noise"></div>
+      <div class="hex-grid"></div>
+
+      <!-- Top Security Metrics Bar -->
+      <header class="topbar panel">
+        <div class="topbar-brand">
+          <p class="eyebrow">IoT Security Command Deck</p>
+          <h1 class="brand">CYBER<span class="brand-accent">CLAW</span></h1>
+        </div>
+        <div class="topbar-stats">
+          <div class="metric" id="metric-threat-level">
+            <span class="metric-value secure" id="val-threat">LOW</span>
+            <span class="metric-label">Threat Level</span>
+          </div>
+          <div class="metric">
+            <span class="metric-value" id="val-infected">0 / 0</span>
+            <span class="metric-label">Infected</span>
+          </div>
+          <div class="metric">
+            <span class="metric-value" id="val-alerts">0</span>
+            <span class="metric-label">Alerts</span>
+          </div>
+          <div class="metric">
+            <span class="metric-value" id="val-isolated">0</span>
+            <span class="metric-label">Isolated</span>
+          </div>
+          <div class="metric">
+            <span class="metric-value" id="val-scenario">READY</span>
+            <span class="metric-label">Scenario</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Left Panel — Alert Timeline -->
+      <aside class="sidebar panel left" id="sidebar-left">
+        <button class="panel-toggle" id="toggle-left" type="button" aria-label="Collapse left sidebar">&lsaquo;</button>
+        <section>
+          <p class="eyebrow">Alert Timeline</p>
+          <div class="alert-filters">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="critical">Critical</button>
+            <button class="filter-btn" data-filter="warning">Warning</button>
+            <button class="filter-btn" data-filter="info">Info</button>
+          </div>
+          <div id="alert-list" class="alert-list"></div>
+          <div class="collector-controls">
+            <p class="eyebrow" style="margin-top:8px">Syslog Collector</p>
+            <div class="collector-btn-row">
+              <button id="btn-collector-start" class="action-btn scan">START</button>
+              <button id="btn-collector-stop" class="action-btn isolate">STOP</button>
+            </div>
+            <div class="collector-status" id="collector-status">Stopped</div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Right Panel — Device Security Detail -->
+      <aside class="sidebar panel right" id="sidebar-right">
+        <button class="panel-toggle" id="toggle-right" type="button" aria-label="Collapse right sidebar">&rsaquo;</button>
+        <section>
+          <p class="eyebrow">Security Detail</p>
+          <div id="detail-panel" class="detail-panel">
+            <h2>Awaiting target</h2>
+            <p>Select a device node to inspect security posture, vulnerabilities, and event history.</p>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Bottom Status Bar -->
+      <footer class="footer panel" id="footer-panel">
+        <button class="panel-toggle" id="toggle-footer" type="button" aria-label="Collapse footer">&darr;</button>
+        <div class="footer-row">
+          <span>Agent <strong id="footer-agent">CyberAgent Online</strong></span>
+          <span>Events <strong id="footer-events">0</strong></span>
+          <span>Socket <strong id="footer-socket">CONNECTING</strong></span>
+          <span>FPS <strong id="footer-fps">--</strong></span>
+        </div>
+        <div class="footer-row muted">
+          <span>CyberClaw IoT Security Platform v1.0</span>
+          <span>Quality <button id="quality-toggle" class="quality-toggle" type="button">BALANCED</button></span>
+        </div>
+      </footer>
+
+      <!-- Demo Control -->
+      <div id="demo-control" class="demo-control panel">
+        <button id="btn-start-demo" class="demo-btn start" type="button">START MIRAI DEMO</button>
+        <button id="btn-stop-demo" class="demo-btn stop" type="button" disabled>STOP</button>
+        <button id="btn-reset" class="demo-btn reset" type="button">RESET</button>
+        <div class="demo-progress">
+          <div class="demo-progress-bar" id="demo-progress-bar"></div>
+          <span class="demo-progress-text" id="demo-progress-text">Ready</span>
+        </div>
+      </div>
+
+      <!-- Panel Reopen Buttons -->
+      <button id="reopen-left" class="panel-reopen reopen-left" type="button">ALERTS</button>
+      <button id="reopen-right" class="panel-reopen reopen-right" type="button">DETAIL</button>
+      <button id="reopen-footer" class="panel-reopen reopen-footer" type="button">STATUS</button>
+
+      <div id="tooltip" class="tooltip"></div>
+
+      <!-- Loading Screen -->
+      <div id="loading" class="loading-screen">
+        <div class="loading-hex">⬡</div>
+        <div class="loading-mark">CYBERCLAW</div>
+        <div class="loading-sub">IoT Security Intelligence Platform</div>
+        <div class="loading-bar"><span id="loading-progress"></span></div>
+        <div id="loading-text" class="loading-text">Initializing threat detection systems...</div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

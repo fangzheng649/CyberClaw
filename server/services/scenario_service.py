@@ -2,10 +2,10 @@ import asyncio
 
 
 MIRAI_SCRIPT = [
-    {"delay": 3000, "event": {"type": "system_ready", "message": "IoT 网络安全监控已上线，15 台设备全部正常"}},
+    {"delay": 3000, "event": {"type": "system_ready", "message": "IoT 网络安全监控已上线"}},
     {"delay": 5000, "event": {"type": "scan_started", "source": "kali", "message": "检测到来自 10.0.1.100 的端口扫描行为", "details": {"targets": ["camera-1","camera-2","camera-3","camera-4","plug-1","plug-2"]}}},
-    {"delay": 6000, "event": {"type": "port_scan", "source": "kali", "target": "camera-1", "severity": "warning", "message": "Camera-1 (10.0.0.101) 开放 Telnet 端口 (23)", "details": {"port": 23, "service": "Telnet"}}},
-    {"delay": 2000, "event": {"type": "port_scan", "source": "kali", "target": "camera-2", "severity": "warning", "message": "Camera-2 (10.0.0.102) 开放 Telnet 端口 (23)", "details": {"port": 23, "service": "Telnet"}}},
+    {"delay": 6000, "event": {"type": "port_scan", "source": "kali", "target": "camera-1", "severity": "warning", "message": "Camera-1 开放 Telnet 端口 (23)", "details": {"port": 23, "service": "Telnet"}}},
+    {"delay": 2000, "event": {"type": "port_scan", "source": "kali", "target": "camera-2", "severity": "warning", "message": "Camera-2 开放 Telnet 端口 (23)", "details": {"port": 23, "service": "Telnet"}}},
     {"delay": 2000, "event": {"type": "vulnerability_found", "target": "camera-1", "severity": "critical", "message": "Camera-1 发现严重漏洞 CVE-2021-36260 (CVSS 9.8)", "details": {"cve": "CVE-2021-36260", "cvss": 9.8}}},
     {"delay": 3000, "event": {"type": "vulnerability_found", "target": "camera-2", "severity": "critical", "message": "Camera-2 发现严重漏洞 CVE-2021-36260 (CVSS 9.8)", "details": {"cve": "CVE-2021-36260", "cvss": 9.8}}},
     {"delay": 4000, "event": {"type": "bruteforce", "source": "kali", "target": "camera-1", "severity": "critical", "message": "Camera-1 遭遇暴力破解 — 12次尝试后成功", "details": {"attempts": 12, "success": True}}},

@@ -1,46 +1,241 @@
+import json
+import logging
+from pathlib import Path
+
 from ..models.schemas import DeviceResponse, LinkResponse, TopologyResponse
 
+logger = logging.getLogger(__name__)
 
-DEVICES = [
-    DeviceResponse(id="router-1", name="Router-1", type="router", ip="10.0.1.1", mac="00:1A:2B:3C:4D:01", status="secure", pos=[-12, 0, -8]),
-    DeviceResponse(id="router-2", name="Router-2", type="router", ip="10.0.2.1", mac="00:1A:2B:3C:4D:02", status="secure", pos=[12, 0, -8]),
-    DeviceResponse(id="switch-core", name="Switch-Core", type="switch", ip="10.0.0.1", mac="00:1A:2B:3C:4D:10", status="secure", pos=[0, 0, 0]),
-    DeviceResponse(id="camera-1", name="Camera-1", type="camera", ip="10.0.0.101", mac="AA:BB:CC:01:01:01", status="secure", pos=[-8, 0, 10], vendor="Hikvision", model="DS-2CD2142"),
-    DeviceResponse(id="camera-2", name="Camera-2", type="camera", ip="10.0.0.102", mac="AA:BB:CC:01:01:02", status="secure", pos=[-3, 0, 12], vendor="Hikvision", model="DS-2CD2142"),
-    DeviceResponse(id="camera-3", name="Camera-3", type="camera", ip="10.0.0.103", mac="AA:BB:CC:01:01:03", status="secure", pos=[3, 0, 12], vendor="Dahua", model="IPC-HDW2431"),
-    DeviceResponse(id="camera-4", name="Camera-4", type="camera", ip="10.0.0.104", mac="AA:BB:CC:01:01:04", status="secure", pos=[8, 0, 10], vendor="Dahua", model="IPC-HDW2431"),
-    DeviceResponse(id="sensor-1", name="TempSensor-1", type="sensor", ip="10.0.0.201", mac="DD:EE:FF:02:01:01", status="secure", pos=[-6, 0, 18], vendor="Siemens", model="SITRANS TH400"),
-    DeviceResponse(id="sensor-2", name="PressureSensor-2", type="sensor", ip="10.0.0.202", mac="DD:EE:FF:02:01:02", status="secure", pos=[6, 0, 18], vendor="Honeywell", model="XLS-100"),
-    DeviceResponse(id="plug-1", name="SmartPlug-1", type="plug", ip="10.0.0.301", mac="11:22:33:03:01:01", status="secure", pos=[-10, 0, 6], vendor="TP-Link", model="HS110"),
-    DeviceResponse(id="plug-2", name="SmartPlug-2", type="plug", ip="10.0.0.302", mac="11:22:33:03:01:02", status="secure", pos=[10, 0, 6], vendor="TP-Link", model="HS110"),
-    DeviceResponse(id="admin-pc", name="Admin-PC", type="pc", ip="10.0.0.10", mac="55:66:77:04:01:01", status="secure", pos=[0, 0, -14]),
-    DeviceResponse(id="kali", name="Kali-Attacker", type="attacker", ip="10.0.1.100", mac="66:66:66:66:66:66", status="secure", pos=[-20, 0, -18]),
-    DeviceResponse(id="server", name="FileServer", type="server", ip="10.0.0.5", mac="77:88:99:05:01:01", status="secure", pos=[0, 0, 8]),
-    DeviceResponse(id="gateway", name="IoT-Gateway", type="gateway", ip="10.0.0.254", mac="88:99:AA:06:01:01", status="secure", pos=[0, 0, -4]),
-]
+# ── Load topology from JSON config ──────────────────────────────
+_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "topology.json"
+_config_cache: dict | None = None
 
-LINKS = [
-    LinkResponse(from_="router-1", to="switch-core"),
-    LinkResponse(from_="router-2", to="switch-core"),
-    LinkResponse(from_="switch-core", to="camera-1"),
-    LinkResponse(from_="switch-core", to="camera-2"),
-    LinkResponse(from_="switch-core", to="camera-3"),
-    LinkResponse(from_="switch-core", to="camera-4"),
-    LinkResponse(from_="switch-core", to="sensor-1"),
-    LinkResponse(from_="switch-core", to="sensor-2"),
-    LinkResponse(from_="switch-core", to="plug-1"),
-    LinkResponse(from_="switch-core", to="plug-2"),
-    LinkResponse(from_="switch-core", to="admin-pc"),
-    LinkResponse(from_="router-1", to="kali"),
-    LinkResponse(from_="switch-core", to="server"),
-    LinkResponse(from_="switch-core", to="gateway"),
-    LinkResponse(from_="router-1", to="router-2"),
-]
+
+def load_topology_config() -> dict:
+    global _config_cache
+    if _config_cache is not None:
+        return _config_cache
+    try:
+        with open(_CONFIG_PATH, encoding="utf-8") as f:
+            _config_cache = json.load(f)
+        logger.info(f"Loaded topology config: {len(_config_cache['devices'])} devices, {len(_config_cache['links'])} links")
+    except FileNotFoundError:
+        logger.error(f"Topology config not found: {_CONFIG_PATH}")
+        _config_cache = {"network": {}, "devices": [], "links": []}
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid topology config: {e}")
+        _config_cache = {"network": {}, "devices": [], "links": []}
+    return _config_cache
+
+
+def _config_device_db() -> dict[str, dict]:
+    """Build name→metadata lookup from config (replaces DEVICE_DB)."""
+    config = load_topology_config()
+    return {d["name"]: d for d in config["devices"]}
+
+
+def _config_to_topology() -> TopologyResponse:
+    """Convert JSON config to TopologyResponse (fallback mode)."""
+    config = load_topology_config()
+    devices = []
+    for d in config["devices"]:
+        devices.append(DeviceResponse(
+            id=d["id"], name=d["name"], type=d["type"],
+            ip=d["ip"], mac=d.get("mac", ""), status="secure",
+            pos=d.get("pos"), vendor=d.get("vendor"), model=d.get("model"),
+            firmware_version=d.get("firmware_version"),
+            serial_number=d.get("serial_number"),
+            discovery_method=d.get("discovery_method", "config"),
+            protocols=d.get("protocols"),
+        ))
+    links = [LinkResponse(from_=l["from"], to=l["to"]) for l in config["links"]]
+    return TopologyResponse(devices=devices, links=links)
+
+
+# ── Docker live data ───────────────────────────────────────────
+_docker_client = None
+_docker_available: bool | None = None
+
+
+def _get_docker_client():
+    global _docker_client, _docker_available
+    if _docker_available is not None:
+        return _docker_client if _docker_available else None
+    try:
+        import docker
+        _docker_client = docker.from_env()
+        _docker_client.ping()
+        _docker_available = True
+        logger.info("Docker connected — live topology mode")
+    except Exception as e:
+        logger.info(f"Docker SDK not available ({e})")
+        _docker_available = False
+    return _docker_client if _docker_available else None
+
+
+def _get_live_topology_subprocess() -> TopologyResponse | None:
+    try:
+        import subprocess, json as _json
+        result = subprocess.run(
+            ["wsl", "-d", "Ubuntu-20.04", "-e", "docker", "ps",
+             "--format", "{{.Names}}|{{.Status}}|{{.Networks}}",
+             "--filter", "network=iot-lab"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+
+        ip_result = subprocess.run(
+            ["wsl", "-d", "Ubuntu-20.04", "-e", "docker", "network", "inspect",
+             "iot-lab", "-f", "{{json .Containers}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        ip_map = {}
+        if ip_result.returncode == 0 and ip_result.stdout.strip():
+            try:
+                containers_json = _json.loads(ip_result.stdout.strip())
+                for cid, info in containers_json.items():
+                    name = info.get("Name", "").lstrip("/")
+                    ip_full = info.get("IPv4Address", "")
+                    if name and ip_full:
+                        ip_map[name] = ip_full.split("/")[0]
+            except (_json.JSONDecodeError, Exception):
+                pass
+
+        devices = []
+        links = []
+        hub_id = "switch-core"
+
+        devices.append(DeviceResponse(
+            id=hub_id, name="Switch-Core", type="switch",
+            ip="10.0.0.0", mac="00:1A:2B:3C:4D:10",
+            status="secure", pos=[0, 0, 0],
+            vendor="Docker", model="Bridge Network",
+        ))
+
+        device_db = _config_device_db()
+        for line in result.stdout.strip().split("\n"):
+            parts = line.strip().split("|")
+            if len(parts) < 2:
+                continue
+            name = parts[0]
+            status_str = parts[1].lower()
+
+            meta = device_db.get(name, {})
+            ip = ip_map.get(name, "N/A")
+            dev_id = name.lower().replace("-", "_")
+
+            devices.append(DeviceResponse(
+                id=dev_id, name=name, type=meta.get("type", "unknown"),
+                ip=ip, mac="",
+                status="secure" if "up" in status_str else "vulnerable",
+                pos=meta.get("pos"),
+                vendor=meta.get("vendor"),
+                model=meta.get("model"),
+            ))
+            links.append(LinkResponse(from_=hub_id, to=dev_id))
+
+        if len(devices) <= 1:
+            return None
+        return TopologyResponse(devices=devices, links=links)
+    except Exception as e:
+        logger.debug(f"Subprocess Docker query failed: {e}")
+        return None
+
+
+def _status_to_security(container_status: str) -> str:
+    if container_status == "running":
+        return "secure"
+    elif container_status == "exited":
+        return "vulnerable"
+    return "scanning"
+
+
+def _get_live_topology() -> TopologyResponse | None:
+    client = _get_docker_client()
+    if not client:
+        return None
+
+    devices = []
+    links = []
+    hub_id = "switch-core"
+
+    devices.append(DeviceResponse(
+        id=hub_id, name="Switch-Core", type="switch",
+        ip="10.0.0.0", mac="00:1A:2B:3C:4D:10",
+        status="secure", pos=[0, 0, 0],
+        vendor="Docker", model="Bridge Network",
+    ))
+
+    try:
+        network = client.networks.get("iot-lab")
+        containers = network.attrs.get("Containers", {})
+    except Exception:
+        containers = {}
+
+    if not containers:
+        for c in client.containers.list(all=True):
+            nets = c.attrs.get("NetworkSettings", {}).get("Networks", {})
+            if "iot-lab" in nets:
+                containers[c.id[:12]] = {
+                    "Name": f"/{c.name}",
+                    "IPv4Address": nets["iot-lab"].get("IPAddress", ""),
+                }
+
+    device_db = _config_device_db()
+    for cid, info in containers.items():
+        name = info.get("Name", "").lstrip("/")
+        ip_full = info.get("IPv4Address", "")
+        ip = ip_full.split("/")[0] if "/" in ip_full else ip_full
+
+        meta = device_db.get(name, {})
+
+        try:
+            container = client.containers.get(cid)
+            status_str = container.status
+        except Exception:
+            status_str = "unknown"
+
+        dev_id = name.lower().replace("-", "_")
+        devices.append(DeviceResponse(
+            id=dev_id, name=name, type=meta.get("type", "unknown"),
+            ip=ip or "N/A", mac="",
+            status=_status_to_security(status_str),
+            pos=meta.get("pos"),
+            vendor=meta.get("vendor"),
+            model=meta.get("model"),
+        ))
+        links.append(LinkResponse(from_=hub_id, to=dev_id))
+
+    if len(devices) <= 1:
+        return None
+
+    return TopologyResponse(devices=devices, links=links)
 
 
 def get_topology() -> TopologyResponse:
-    return TopologyResponse(devices=DEVICES, links=LINKS)
+    # Try Docker SDK first (works inside Docker/WSL)
+    live = _get_live_topology()
+    if live:
+        return live
+    # Try subprocess via WSL (works from Windows host)
+    live = _get_live_topology_subprocess()
+    if live:
+        return live
+    # Fallback to JSON config
+    return _config_to_topology()
 
 
 def get_device(device_id: str) -> DeviceResponse | None:
-    return next((d for d in DEVICES if d.id == device_id), None)
+    topo = get_topology()
+    return next((d for d in topo.devices if d.id == device_id), None)
+
+
+def get_device_by_ip(ip: str) -> DeviceResponse | None:
+    topo = get_topology()
+    return next((d for d in topo.devices if d.ip == ip), None)
+
+
+def get_device_id_by_ip(ip: str) -> str | None:
+    dev = get_device_by_ip(ip)
+    return dev.id if dev else None
