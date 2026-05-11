@@ -272,7 +272,7 @@ secure → scanning → vulnerable → attacked → isolated
 
 ## 致谢
 
-- 基于 [NetClaw / OpenClaw](https://github.com/sunnyhuangcy/openclaw) 框架构建
+- 基于 [OpenClaw](https://github.com/sunnyhuangcy/openclaw) 框架构建
 - 设备识别参考 [NetAlertX](https://github.com/jcwilde/netalertx) 多层匹配模式
 - 参考了 [UniversalScanner](https://github.com/jcwilde/UniversalScanner) 和 [lan-control](https://github.com/alexryaskin/lan-control) 的设计思路
 
