@@ -75,6 +75,23 @@ class MQTTMonitor:
             if len(self._topic_counts[msg.topic]) > 100:
                 self._topic_counts[msg.topic] = self._topic_counts[msg.topic][-50:]
 
+            # Persist to database (check for anomalies)
+            try:
+                from .nx_bridge import get_bridge
+                severity = "info"
+                # Simple anomaly: high publish rate
+                topic_times = self._topic_counts.get(msg.topic, [])
+                if len(topic_times) >= 10:
+                    recent = [t for t in topic_times if now - t < 60]
+                    if len(recent) > 50:
+                        severity = "warning"
+                asyncio.get_event_loop().create_task(
+                    get_bridge().record_security_event(
+                        "mqtt", severity, f"MQTT {msg.topic}: {payload[:100]}",
+                        source=msg.topic))
+            except Exception:
+                pass
+
             if self._broadcast_fn:
                 import asyncio
                 try:

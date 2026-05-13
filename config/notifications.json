@@ -1,0 +1,36 @@
+{
+  "channels": {
+    "webhook": {
+      "enabled": true,
+      "url": "",
+      "secret": ""
+    },
+    "ntfy": {
+      "enabled": true,
+      "server": "https://ntfy.sh",
+      "topic": "cyberclaw-alerts"
+    }
+  },
+  "rules": [
+    {
+      "name": "严重安全事件",
+      "severity": [
+        "critical"
+      ],
+      "channels": [
+        "webhook",
+        "ntfy"
+      ]
+    },
+    {
+      "name": "高危事件",
+      "severity": [
+        "warning",
+        "high"
+      ],
+      "channels": [
+        "webhook"
+      ]
+    }
+  ]
+}

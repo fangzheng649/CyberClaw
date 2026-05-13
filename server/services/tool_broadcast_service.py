@@ -132,6 +132,19 @@ async def _handle_network_scan(data: dict, _target: str | None):
                 ))
                 break
 
+        # Persist scan results to database
+        try:
+            from .nx_bridge import get_bridge
+            for d in devices:
+                await get_bridge().upsert_device(d["device_id"], {
+                    "devLastIP": d["ip"],
+                    "devVendor": d.get("vendor", ""),
+                    "devOpenPorts": json.dumps(d.get("ports", [])),
+                    "devOsGuess": ", ".join(d.get("os", [])),
+                }, source="NMAP")
+        except Exception:
+            pass
+
 
 async def _handle_iot_fingerprint(data: dict, _target: str | None):
     devices = []

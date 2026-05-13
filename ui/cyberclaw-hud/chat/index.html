@@ -7,7 +7,15 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <!-- Bootstrap + AdminLTE dark theme overrides -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3/dist/css/adminlte.min.css" />
+    <!-- DataTables Bootstrap4 -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap4.min.css" />
+    <!-- CyberClaw dark theme overrides (MUST load after AdminLTE) -->
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="../src/dashboard.css" />
   </head>
   <body>
     <div id="app">
@@ -19,6 +27,7 @@
         </div>
         <nav class="tabs">
           <button class="tab active" data-tab="chat">对话</button>
+          <button class="tab" data-tab="dashboard">Dashboard</button>
           <button class="tab" data-tab="reports">报告</button>
           <button class="tab" data-tab="ops">操作</button>
           <button class="tab" data-tab="history">历史</button>
@@ -45,24 +54,26 @@
         </div>
       </main>
 
+      <!-- Tab: Dashboard -->
+      <main class="tab-content" id="tab-dashboard">
+        <div id="dashboard-content"></div>
+      </main>
+
       <!-- Tab: Reports -->
       <main class="tab-content" id="tab-reports">
-        <div class="reports-layout">
-          <div class="reports-sidebar">
-            <div class="report-filters">
-              <button class="filter active" data-filter="all">全部</button>
-              <button class="filter" data-filter="scan">巡检</button>
-              <button class="filter" data-filter="attack">复盘</button>
-              <button class="filter" data-filter="compliance">合规</button>
+        <div class="rp-layout">
+          <div class="rp-toolbar">
+            <div class="rp-tabs">
+              <button class="rp-tab active" data-rp="devices">设备清单</button>
+              <button class="rp-tab" data-rp="events">安全事件</button>
             </div>
-            <div class="report-list" id="report-list">
-              <div class="empty-state">暂无报告，通过对话生成</div>
-            </div>
+            <div class="rp-controls" id="rp-controls"></div>
           </div>
-          <div class="report-detail" id="report-detail">
-            <div class="empty-state">选择左侧报告查看详情</div>
+          <div class="rp-body" id="rp-body">
+            <div class="empty-state">加载数据中...</div>
           </div>
         </div>
+        <div id="report-list" class="report-list-container"></div>
       </main>
 
       <!-- Tab: Operations -->
@@ -87,6 +98,28 @@
               </div>
             </section>
             <section class="ops-section">
+              <h3>扫描调度</h3>
+              <div class="scan-scheduler">
+                <div class="scan-fields">
+                  <div class="scan-field">
+                    <label>子网</label>
+                    <input type="text" class="ops-input" id="scan-subnet" value="192.168.1.0/24" />
+                  </div>
+                  <div class="scan-field">
+                    <label>间隔(s)</label>
+                    <input type="number" class="ops-input" id="scan-interval" value="300" min="60" />
+                  </div>
+                </div>
+                <div class="scan-actions">
+                  <button class="ops-action-btn start" id="btn-scan-start">START</button>
+                  <button class="ops-action-btn stop" id="btn-scan-stop" disabled>STOP</button>
+                  <span class="scan-status-dot" id="scan-dot"></span>
+                  <span class="scan-status-text" id="scan-status-text">已停止</span>
+                </div>
+                <div class="scan-stats" id="scan-stats"></div>
+              </div>
+            </section>
+            <section class="ops-section">
               <h3>MCP 服务器</h3>
               <div class="mcp-list" id="mcp-list">
                 <!-- Populated by JS -->
@@ -98,6 +131,13 @@
               <h3>可用 Skills</h3>
               <div class="skills-list" id="skills-list">
                 <!-- Populated by JS -->
+              </div>
+            </section>
+            <section class="ops-section">
+              <h3>活跃工作流</h3>
+              <button class="ops-action-btn start" id="btn-add-wf" style="margin-bottom:8px;width:100%">+ New Workflow</button>
+              <div class="wf-list" id="wf-list">
+                <div class="empty-state">加载中...</div>
               </div>
             </section>
             <section class="ops-section flex-1">
@@ -112,17 +152,29 @@
 
       <!-- Tab: History -->
       <main class="tab-content" id="tab-history">
-        <div class="history-layout">
-          <div class="history-sidebar">
-            <div class="history-search">
-              <input type="text" class="search-input" placeholder="搜索历史对话..." id="history-search" />
-            </div>
-            <div class="session-list" id="session-list">
-              <!-- Populated by JS -->
-            </div>
+        <div class="hist-layout">
+          <div class="hist-sidebar">
+            <section class="hist-section">
+              <h3>通知通道</h3>
+              <div class="notif-channels" id="notif-channels">
+                <div class="empty-state">加载中...</div>
+              </div>
+            </section>
+            <section class="hist-section flex-1">
+              <h3>工作流事件</h3>
+              <div class="wf-evt-list" id="wf-evt-list">
+                <div class="empty-state">加载中...</div>
+              </div>
+            </section>
           </div>
-          <div class="history-detail" id="history-detail">
-            <div class="empty-state">选择左侧会话查看详情</div>
+          <div class="hist-main">
+            <div class="hist-main-header">
+              <h3>通知历史</h3>
+              <button class="ops-action-btn start hist-test-btn" id="btn-notif-test">发送测试</button>
+            </div>
+            <div class="notif-history" id="notif-history">
+              <div class="empty-state">加载中...</div>
+            </div>
           </div>
         </div>
       </main>
@@ -134,8 +186,37 @@
           <button id="btn-send" class="btn-send">发送</button>
         </div>
       </footer>
+
+      <!-- Device Detail Slide Panel -->
+      <div class="device-panel" id="device-panel">
+        <div class="dpn-header">
+          <button class="dpn-close" id="dpn-close">&times;</button>
+          <div class="dpn-device-name" id="dpn-name"></div>
+          <span class="status-badge" id="dpn-status-badge"></span>
+        </div>
+        <div class="dpn-nav">
+          <button class="dpn-tab active" data-dpn="overview">概览</button>
+          <button class="dpn-tab" data-dpn="events">事件</button>
+          <button class="dpn-tab" data-dpn="connections">连接</button>
+        </div>
+        <div class="dpn-body" id="dpn-body"></div>
+        <div class="dpn-footer">
+          <button class="dpn-prev" id="dpn-prev">&lsaquo; Prev</button>
+          <span id="dpn-position" style="font-size:10px;color:var(--muted)"></span>
+          <button class="dpn-next" id="dpn-next">Next &rsaquo;</button>
+        </div>
+      </div>
     </div>
 
+    <!-- jQuery + Bootstrap + AdminLTE -->
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/admin-lte@3/dist/js/adminlte.min.js"></script>
+    <!-- DataTables -->
+    <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap4.min.js"></script>
+    <!-- Toast container -->
+    <div class="toast-container" id="toast-container"></div>
     <script src="main.js" type="module"></script>
   </body>
 </html>

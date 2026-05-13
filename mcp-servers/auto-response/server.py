@@ -11,6 +11,9 @@ Tools:
 import json
 import logging
 import os
+import shutil
+import sqlite3
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -62,6 +65,47 @@ def _load_device_ports() -> dict:
 
 _ACL_BLOCKED_IPS: list[dict] = []
 
+_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "cyberclaw.db"
+
+
+def _get_isolation_service():
+    """Lazily import and return the IsolationService singleton."""
+    try:
+        project_root = Path(__file__).resolve().parent.parent.parent
+        sys.path.insert(0, str(project_root))
+        from server.services.isolation_service import get_isolation_service
+        return get_isolation_service()
+    except Exception as e:
+        logger.error(f"Failed to import isolation service: {e}")
+        return None
+
+
+def _update_device_status(device_ip: str, status: str) -> None:
+    """Update device status in the database."""
+    try:
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.execute('UPDATE Devices SET "devStatus" = ? WHERE "devLastIP" = ?', (status, device_ip))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"DB device status update failed: {e}")
+
+
+def _record_security_event(source_type: str, severity: str, message: str,
+                           source: str, target: str, fsm_state: str) -> None:
+    """Insert a security event record into the database."""
+    try:
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.execute(
+            """INSERT INTO security_events (source_type, severity, message, source, target, fsm_state)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (source_type, severity, message, source, target, fsm_state),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"DB security event insert failed: {e}")
+
 
 def _add_action(action_type: str, target: str, detail: str, status: str = "active") -> dict:
     action = {
@@ -105,13 +149,26 @@ async def isolate_device(device_ip: str, reason: str = "security_event") -> str:
 
     # Call IsolationService for real execution
     try:
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-        from server.services.isolation_service import get_isolation_service
-        svc = get_isolation_service()
-        result = await svc.isolate(device_ip)
+        svc = _get_isolation_service()
+        if svc:
+            result = await svc.isolate(device_ip)
+        else:
+            result = {"status": "error", "message": "IsolationService unavailable"}
     except Exception as e:
         logger.error(f"IsolationService error: {e}")
         result = {"status": "error", "message": str(e)}
+
+    # Persist isolation state to database
+    if result.get("status") in ("isolated", "already_isolated", "recorded"):
+        _update_device_status(device_ip, "isolated")
+        _record_security_event(
+            source_type="auto-response",
+            severity="warning",
+            message=f"Device {device_ip} isolated: {reason}",
+            source="auto-response",
+            target=device_ip,
+            fsm_state="isolated",
+        )
 
     return json.dumps({
         "action_id": action["id"],
@@ -152,13 +209,26 @@ async def restore_device(device_ip: str) -> str:
 
     # Call IsolationService for real execution
     try:
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-        from server.services.isolation_service import get_isolation_service
-        svc = get_isolation_service()
-        result = await svc.restore(device_ip)
+        svc = _get_isolation_service()
+        if svc:
+            result = await svc.restore(device_ip)
+        else:
+            result = {"status": "error", "message": "IsolationService unavailable"}
     except Exception as e:
         logger.error(f"IsolationService error: {e}")
         result = {"status": "error", "message": str(e)}
+
+    # Persist restored state to database
+    if result.get("status") in ("restored", "recorded"):
+        _update_device_status(device_ip, "secure")
+        _record_security_event(
+            source_type="auto-response",
+            severity="info",
+            message=f"Device {device_ip} restored to secure",
+            source="auto-response",
+            target=device_ip,
+            fsm_state="secure",
+        )
 
     return json.dumps({
         "action_id": action["id"],
@@ -189,11 +259,42 @@ async def block_ip(ip_address: str, reason: str = "malicious_traffic") -> str:
     entry = {"ip": ip_address, "reason": reason, "status": "active",
              "timestamp": datetime.now().isoformat(), "acl_rule": f"deny ip any host {ip_address}"}
     _ACL_BLOCKED_IPS.append(entry)
+
+    # Attempt real iptables rule if available
+    iptables_ok = False
+    if shutil.which("iptables"):
+        try:
+            proc = subprocess.run(
+                ["iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"],
+                capture_output=True, timeout=10,
+            )
+            if proc.returncode == 0:
+                iptables_ok = True
+                logger.info(f"iptables DROP rule added for {ip_address}")
+            else:
+                logger.warning(f"iptables returned non-zero: {proc.stderr.decode(errors='replace')}")
+        except Exception as e:
+            logger.warning(f"iptables failed: {e}")
+    # Also try via WSL on Windows
+    elif shutil.which("wsl"):
+        try:
+            proc = subprocess.run(
+                ["wsl", "-e", "iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"],
+                capture_output=True, timeout=10,
+            )
+            if proc.returncode == 0:
+                iptables_ok = True
+                logger.info(f"iptables (via WSL) DROP rule added for {ip_address}")
+        except Exception as e:
+            logger.warning(f"iptables via WSL failed: {e}")
+
     action = _add_action("block_ip", ip_address, f"ACL block: {reason}")
     return json.dumps({
         "action_id": action["id"], "status": "blocked",
         "ip": ip_address, "acl_rule": entry["acl_rule"],
-        "reason": reason, "note": f"ACL 规则已下发，阻止所有到 {ip_address} 的流量",
+        "reason": reason, "iptables_applied": iptables_ok,
+        "note": f"ACL 规则已下发，阻止所有到 {ip_address} 的流量"
+               + (" (iptables DROP applied)" if iptables_ok else " (in-memory only — iptables unavailable)"),
     }, ensure_ascii=False, indent=2)
 
 

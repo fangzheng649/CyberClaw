@@ -28,7 +28,7 @@
     },
     "device-config": {
       "command": "python3",
-      "args": ["-u", "mcp-servers/device-config/device_config_server.py"],
+      "args": ["-u", "mcp-servers/device-config/gnmi_mcp_server.py"],
       "env": {
         "GNMI_TARGETS": "${GNMI_TARGETS}",
         "GNMI_DEFAULT_PORT": "${GNMI_DEFAULT_PORT:-6030}"

@@ -1,8 +1,13 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
 from ..services.scenario_service import ScenarioService
 
 router = APIRouter(prefix="/api/scenario", tags=["scenario"])
 scenario_service = ScenarioService()
+
+
+class StartRequest(BaseModel):
+    mode: str = "demo"  # "demo" or "live"
 
 
 def set_scenario_service(svc: ScenarioService) -> None:
@@ -21,9 +26,10 @@ async def scenario_status():
 
 
 @router.post("/{scenario_id}/start")
-async def start_scenario(scenario_id: str):
-    await scenario_service.start()
-    return {"status": "running", "scenario_id": scenario_id}
+async def start_scenario(scenario_id: str, body: StartRequest = None):
+    mode = body.mode if body else "demo"
+    await scenario_service.start(mode=mode)
+    return {"status": "running", "scenario_id": scenario_id, "mode": mode}
 
 
 @router.post("/{scenario_id}/stop")

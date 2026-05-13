@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CyberClaw 改进方案</title>
+<style>
+  :root {
+    --bg: #0a0e17;
+    --surface: #111827;
+    --border: #1e293b;
+    --accent: #00e5ff;
+    --accent2: #7c3aed;
+    --critical: #ef4444;
+    --high: #f97316;
+    --medium: #eab308;
+    --low: #22c55e;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --code-bg: #1a1a2e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 0;
+  }
+  /* Header */
+  .header {
+    background: linear-gradient(135deg, #0a0e17 0%, #1a1040 50%, #0a0e17 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 60px 40px;
+    text-align: center;
+  }
+  .header h1 {
+    font-size: 2.4em;
+    font-weight: 700;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 12px;
+  }
+  .header p {
+    color: var(--text-dim);
+    font-size: 1.1em;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+  /* Navigation */
+  .nav {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 40px;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .nav a {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.9em;
+    padding: 6px 14px;
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+  .nav a:hover {
+    color: var(--accent);
+    background: rgba(0,229,255,0.08);
+  }
+  .nav .priority-tag {
+    font-size: 0.7em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-left: 4px;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+  .p0 { background: var(--critical); color: #fff; }
+  .p1 { background: var(--medium); color: #000; }
+  .p2 { background: var(--accent); color: #000; }
+  /* Main */
+  .container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 40px 32px;
+  }
+  /* Section */
+  .section {
+    margin-bottom: 64px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-number {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4em;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .section-header h2 {
+    font-size: 1.6em;
+    font-weight: 600;
+  }
+  .section-header .badge {
+    margin-left: auto;
+    font-size: 0.8em;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-weight: 600;
+  }
+  /* Problem / Solution cards */
+  .problem-card {
+    background: rgba(239,68,68,0.06);
+    border: 1px solid rgba(239,68,68,0.2);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+  }
+  .problem-card .label {
+    color: var(--critical);
+    font-weight: 600;
+    font-size: 0.85em;
+    margin-bottom: 8px;
+    display: block;
+  }
+  .solution-card {
+    background: rgba(34,197,94,0.06);
+    border: 1px solid rgba(34,197,94,0.2);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+  }
+  .solution-card .label {
+    color: var(--low);
+    font-weight: 600;
+    font-size: 0.85em;
+    margin-bottom: 8px;
+    display: block;
+  }
+  /* Architecture diagram */
+  .arch-diagram {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 20px 0;
+    overflow-x: auto;
+  }
+  .arch-diagram pre {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 0.85em;
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .arch-diagram .hl-accent { color: var(--accent); font-weight: 600; }
+  .arch-diagram .hl-purple { color: var(--accent2); }
+  .arch-diagram .hl-orange { color: var(--high); }
+  .arch-diagram .hl-green { color: var(--low); }
+  .arch-diagram .hl-dim { color: var(--text-dim); }
+  /* Steps */
+  .steps {
+    list-style: none;
+    counter-reset: step-counter;
+  }
+  .steps li {
+    counter-increment: step-counter;
+    position: relative;
+    padding: 12px 0 12px 44px;
+    border-left: 2px solid var(--border);
+    margin-left: 16px;
+  }
+  .steps li::before {
+    content: counter(step-counter);
+    position: absolute;
+    left: -13px;
+    top: 12px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 0.75em;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .steps li:last-child { border-left-color: transparent; }
+  .steps code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.88em;
+    color: var(--accent);
+  }
+  /* Effort badge */
+  .effort {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 0.85em;
+    margin-top: 16px;
+  }
+  .effort-medium { background: rgba(234,179,8,0.12); color: var(--medium); border: 1px solid rgba(234,179,8,0.25); }
+  .effort-high { background: rgba(239,68,68,0.12); color: var(--critical); border: 1px solid rgba(239,68,68,0.25); }
+  .effort-low { background: rgba(34,197,94,0.12); color: var(--low); border: 1px solid rgba(34,197,94,0.25); }
+  /* Comparison table */
+  .comparison {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-size: 0.92em;
+  }
+  .comparison th {
+    background: var(--surface);
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 2px solid var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .comparison td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .comparison tr:hover td { background: rgba(0,229,255,0.03); }
+  /* Priority table */
+  .priority-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    margin-top: 32px;
+  }
+  .priority-section h2 {
+    font-size: 1.4em;
+    margin-bottom: 20px;
+    color: var(--accent);
+  }
+  .priority-grid {
+    display: grid;
+    grid-template-columns: 80px 1fr 1fr;
+    gap: 0;
+  }
+  .priority-grid .row {
+    display: contents;
+  }
+  .priority-grid .cell {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.92em;
+  }
+  .priority-grid .cell-level {
+    font-weight: 700;
+    text-align: center;
+    font-size: 1.1em;
+  }
+  .priority-grid .cell-reason {
+    color: var(--text-dim);
+  }
+  /* File list */
+  .file-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .file-item {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 0.85em;
+  }
+  .file-item .tag {
+    display: inline-block;
+    font-size: 0.75em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-left: 6px;
+    font-family: 'Segoe UI', sans-serif;
+  }
+  .tag-new { background: rgba(34,197,94,0.2); color: var(--low); }
+  .tag-mod { background: rgba(234,179,8,0.2); color: var(--medium); }
+  /* Footer */
+  .footer {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-dim);
+    font-size: 0.85em;
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<div class="header">
+  <h1>CyberClaw 改进方案</h1>
+  <p>针对当前五项不足，给出可落地的技术方案与实施路径。<br>定位：IoT 专项安全运营工具 — 填补传统 SIEM/IDS 管不到的 IoT 盲区。</p>
+</div>
+
+<!-- ===== NAV ===== -->
+<div class="nav">
+  <a href="#s1">1. 真实流量检测 <span class="priority-tag p0">P0</span></a>
+  <a href="#s2">2. HUD 实用化 <span class="priority-tag p0">P0</span></a>
+  <a href="#s3">3. MITRE 场景框架 <span class="priority-tag p2">P2</span></a>
+  <a href="#s4">4. AI 威胁分析 <span class="priority-tag p1">P1</span></a>
+  <a href="#s5">5. 产品定位 <span class="priority-tag p2">P2</span></a>
+  <a href="#priority">实施优先级</a>
+</div>
+
+<div class="container">
+
+<!-- ===== SECTION 1 ===== -->
+<div class="section" id="s1">
+  <div class="section-header">
+    <div class="section-number" style="background:rgba(0,229,255,0.12);color:var(--accent);">1</div>
+    <h2>真实流量检测 — 集成 Suricata</h2>
+    <span class="badge p0">P0 优先</span>
+  </div>
+
+  <div class="problem-card">
+    <span class="label">当前问题</span>
+    不像 Suricata/Zeek 能抓包分析，CyberClaw 的"检测"完全依赖外部扫描和 syslog 上报，自身没有 DPI 能力。无法检测正在发生的网络攻击（端口扫描、暴力破解、异常流量）。
+  </div>
+
+  <div class="solution-card">
+    <span class="label">改进方案</span>
+    CyberClaw 不需要自己造 DPI 轮子。正确做法是<strong>嵌入 Suricata 作为检测引擎</strong>，CyberClaw 负责解析告警、关联分析、触发响应。
+  </div>
+
+  <div class="arch-diagram">
+<pre>
+<span class="hl-dim">网络流量</span>
+    │
+    ▼
+┌──────────────┐    ┌──────────────┐    ┌────────────────┐
+│ 网络镜像 /   │    │   Suricata   │    │   eve.json     │
+│ SPAN 端口 /  │───→│   (IDS 模式) │───→│   实时事件流    │
+│ PCAP 文件    │    │              │    │                │
+└──────────────┘    └──────────────┘    └───────┬────────┘
+                                               │  watchdog 监听
+                                    ┌──────────▼──────────┐
+                                    │  CyberClaw Backend   │
+                                    │ suricata_service.py  │
+                                    │                      │
+                                    │  解析 eve.json →     │
+                                    │  映射 5-state FSM →  │
+                                    │  WebSocket 推送 HUD  │
+                                    └──────────────────────┘
+</pre>
+  </div>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">实施步骤</h3>
+  <ol class="steps">
+    <li><strong>轻量抓包层</strong>：用 <code>scapy.sniff()</code> 或 <code>pyshark</code>（tshark 封装）做基础流量统计 — 协议分布、连接计数、异常流量检测</li>
+    <li><strong>集成 Suricata</strong>：后端用 <code>watchdog</code> 库监听 <code>eve.json</code> 文件变化，实时解析 alert/dns/http/anomaly 事件</li>
+    <li><strong>事件映射</strong>：新建 <code>server/services/suricata_service.py</code>（约 200 行），将 Suricata 告警映射到 CyberClaw 的 5-state FSM（secure → scanning → vulnerable → attacked → isolated）</li>
+    <li><strong>WebSocket 推送</strong>：告警实时推送到 HUD，触发设备状态变化和告警列表更新</li>
+    <li><strong>IoT 专项规则</strong>：编写 Suricata 规则集覆盖 IoT 场景 — 摄像头 RTSP 暴力破解、MQTT 未授权访问、Modbus 异常读写、UPnP 漏洞利用</li>
+  </ol>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">涉及文件</h3>
+  <div class="file-list">
+    <div class="file-item">server/services/suricata_service.py <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">server/services/traffic_service.py <span class="tag tag-mod">MOD</span></div>
+    <div class="file-item">config/suricata/iot-rules.yaml <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">server/api/tools.py <span class="tag tag-mod">MOD</span></div>
+  </div>
+
+  <div class="effort effort-medium">
+    <strong>投入评估：</strong>中等 &mdash; Suricata 规则配置是核心工作，Python 集成约 200 行。Suricata 支持 Windows/Linux。
+  </div>
+</div>
+
+<!-- ===== SECTION 2 ===== -->
+<div class="section" id="s2">
+  <div class="section-header">
+    <div class="section-number" style="background:rgba(124,58,237,0.15);color:var(--accent2);">2</div>
+    <h2>HUD 实用化 — 保留 3D + 增加 SOC 面板</h2>
+    <span class="badge p0">P0 优先</span>
+  </div>
+
+  <div class="problem-card">
+    <span class="label">当前问题</span>
+    3D 拓扑球视觉效果好，但安全运维人员需要的是<strong>告警列表、趋势图、日志检索</strong>。真正的 SOC 用 TheHive/OpenSearch 这种界面。当前 HUD 无法支撑日常安全运维工作。
+  </div>
+
+  <div class="solution-card">
+    <span class="label">改进方案</span>
+    3D 拓扑保留（作为网络概览），但必须在 HUD 左侧和下方增加<strong>三个实用 SOC 面板</strong>：告警列表面板、趋势图面板、日志检索面板。引入 ECharts 做数据可视化。
+  </div>
+
+  <div class="arch-diagram">
+<pre>
+┌─────────────────────────────────────────────────────────────┐
+│  CyberClaw SOC Dashboard                                    │
+│                                                             │
+│  ┌──────────────────────┐  ┌──────────────────────────────┐ │
+│  │                      │  │ <span class="hl-critical">告警面板</span>                   │ │
+│  │   <span class="hl-accent">3D 拓扑视图</span>        │  │ ┌──────┬──────┬───────────┐ │ │
+│  │   (保留，缩小到左上)  │  │ │ 时间  │ 级别  │ 描述      │ │ │
+│  │                      │  │ ├──────┼──────┼───────────┤ │ │
+│  │   · 设备状态实时着色  │  │ │ 13:02│<span class="hl-critical">CRIT</span> │ 端口扫描  │ │ │
+│  │   · 点击查看详情     │  │ │ 13:01│<span class="hl-orange">HIGH</span> │ 暴力破解  │ │ │
+│  │                      │  │ │ 12:58│<span class="hl-green">MED </span> │ SNMP trap │ │ │
+│  └──────────────────────┘  │ └──────┴──────┴───────────┘ │ │
+│                            └──────────────────────────────┘ │
+│                                                             │
+│  ┌──────────────────────┐  ┌──────────────────────────────┐ │
+│  │ <span class="hl-purple">趋势图 (ECharts)</span>     │  │ <span class="hl-green">日志检索</span>                    │ │
+│  │                      │  │                              │ │
+│  │ 告警数/小时 折线图    │  │ [搜索框] [级别] [设备] [时间] │ │
+│  │ 设备状态 饼图        │  │                              │ │
+│  │ 协议流量 柱状图      │  │ syslog / snmp / mqtt 统一检索 │ │
+│  │ 攻击类型 统计        │  │ 支持全文搜索 + 过滤          │ │
+│  └──────────────────────┘  └──────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">实施步骤</h3>
+  <ol class="steps">
+    <li><strong>引入 ECharts</strong>：<code>npm install echarts</code>（轻量图表库，无需 React/Vue）</li>
+    <li><strong>告警列表面板</strong>：按时间倒序展示安全事件，支持按 severity / device / type 三维过滤，点击跳转设备详情</li>
+    <li><strong>趋势图面板</strong>：24 小时告警数量折线图、设备状态分布饼图、协议流量柱状图、攻击类型 TOP10</li>
+    <li><strong>日志检索面板</strong>：可搜索的表格，统一检索 syslog / snmp trap / mqtt message，支持全文搜索 + 多字段过滤</li>
+    <li><strong>布局调整</strong>：3D 拓扑缩小到左上 1/4 区域，其余空间给实用面板。支持面板折叠/展开</li>
+    <li><strong>数据源</strong>：WebSocket 实时推送 + <code>/api/security/events</code> 查询历史事件</li>
+  </ol>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">涉及文件</h3>
+  <div class="file-list">
+    <div class="file-item">ui/cyberclaw-hud/src/panels/alert-list.js <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">ui/cyberclaw-hud/src/panels/trend-chart.js <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">ui/cyberclaw-hud/src/panels/log-search.js <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">ui/cyberclaw-hud/src/main.js <span class="tag tag-mod">MOD</span></div>
+    <div class="file-item">ui/cyberclaw-hud/src/styles.css <span class="tag tag-mod">MOD</span></div>
+    <div class="file-item">server/api/security.py <span class="tag tag-mod">MOD</span></div>
+  </div>
+
+  <div class="effort effort-high">
+    <strong>投入评估：</strong>较大 &mdash; 但价值最高，这是安全人员每天盯着看的东西。预计新增 800-1200 行前端代码。
+  </div>
+</div>
+
+<!-- ===== SECTION 3 ===== -->
+<div class="section" id="s3">
+  <div class="section-header">
+    <div class="section-number" style="background:rgba(234,179,8,0.12);color:var(--medium);">3</div>
+    <h2>Scenario 改为 MITRE ATT&amp;CK 演练框架</h2>
+    <span class="badge p2">P2 优先</span>
+  </div>
+
+  <div class="problem-card">
+    <span class="label">当前问题</span>
+    攻击场景模式是写死的逐步推进动画，本质是演示而非真实的攻击检测。对安全评估没有实际价值。
+  </div>
+
+  <div class="solution-card">
+    <span class="label">改进方案</span>
+    改为基于 <strong>MITRE ATT&amp;CK for ICS</strong> 的检测验证框架。每个场景是<strong>真实的攻击操作 + 真实的检测验证</strong>，输出检测覆盖率报告。
+  </div>
+
+  <div class="arch-diagram">
+<pre>
+┌─────────────────────────────────────────────────────────┐
+│  MITRE ATT&amp;CK 检测验证框架                               │
+│                                                         │
+│  <span class="hl-accent">场景定义 (JSON)</span>          <span class="hl-orange">执行引擎</span>           <span class="hl-green">验证报告</span>  │
+│  ┌──────────────┐     ┌──────────────┐    ┌───────────┐ │
+│  │ T1046 扫描    │     │ 执行真实操作  │    │ 检测覆盖率 │ │
+│  │ T1078 凭据    │────→│ nmap/hydra/  │───→│ ATT&amp;CK    │ │
+│  │ T1133 远程    │     │ mqtt-client  │    │ 热力图     │ │
+│  │ T0883 暴力    │     │              │    │           │ │
+│  └──────────────┘     └──────┬───────┘    └───────────┘ │
+│                              │                          │
+│                     ┌────────▼────────┐                 │
+│                     │  检测验证        │                 │
+│                     │  Suricata 是否   │                 │
+│                     │  产生告警？      │                 │
+│                     │  Syslog 是否     │                 │
+│                     │  记录异常？      │                 │
+│                     └─────────────────┘                 │
+└─────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">场景示例</h3>
+
+  <table class="comparison">
+    <tr>
+      <th>MITRE ID</th>
+      <th>战术</th>
+      <th>攻击操作</th>
+      <th>检测验证</th>
+    </tr>
+    <tr>
+      <td><code>T1046</code></td>
+      <td>Discovery</td>
+      <td>nmap -sS 全端口扫描</td>
+      <td>Suricata 产生 port-scan 告警</td>
+    </tr>
+    <tr>
+      <td><code>T1078</code></td>
+      <td>Credential Access</td>
+      <td>hydra 暴力破解 Telnet</td>
+      <td>Syslog 记录多次登录失败</td>
+    </tr>
+    <tr>
+      <td><code>T1133</code></td>
+      <td>Initial Access</td>
+      <td>未授权 MQTT 订阅</td>
+      <td>MQTT 异常发布率检测触发</td>
+    </tr>
+    <tr>
+      <td><code>T0883</code></td>
+      <td>Command &amp; Control</td>
+      <td>Modbus 异常功能码写入</td>
+      <td>Suricata Modbus 规则命中</td>
+    </tr>
+    <tr>
+      <td><code>T1021</code></td>
+      <td>Lateral Movement</td>
+      <td>SSH 横向移动</td>
+      <td>异常 SSH 连接日志</td>
+    </tr>
+  </table>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">涉及文件</h3>
+  <div class="file-list">
+    <div class="file-item">config/mitre_scenarios.json <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">server/services/attack_sim.py <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">server/services/detect_verify.py <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">server/api/scenario.py <span class="tag tag-mod">MOD</span></div>
+  </div>
+
+  <div class="effort effort-medium">
+    <strong>投入评估：</strong>中等 &mdash; 核心是场景定义 + 检测验证逻辑。对答辩/展示有直接价值。
+  </div>
+</div>
+
+<!-- ===== SECTION 4 ===== -->
+<div class="section" id="s4">
+  <div class="section-header">
+    <div class="section-number" style="background:rgba(0,229,255,0.12);color:var(--accent);">4</div>
+    <h2>AI 威胁分析 — 真正的安全推理</h2>
+    <span class="badge p1">P1 优先</span>
+  </div>
+
+  <div class="problem-card">
+    <span class="label">当前问题</span>
+    chat 接口接的是后端 API，不是真正的威胁分析 AI。目前只是工具调用入口，输入"最近有什么异常"只会返回工具列表，而不是给出分析结论。
+  </div>
+
+  <div class="solution-card">
+    <span class="label">改进方案</span>
+    利用已有的 GLM-4 API，构建三层 AI 分析能力：<strong>事件分类 → 事件关联 → 报告生成</strong>。将 chat 从工具入口改为安全分析助手。
+  </div>
+
+  <div class="arch-diagram">
+<pre>
+┌────────────────────────────────────────────────────────┐
+│  AI 安全分析引擎                                        │
+│                                                        │
+│  <span class="hl-accent">Layer 1: 事件分类</span>                                    │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │ 输入: 单条 syslog / snmp trap / suricata alert   │  │
+│  │ 输出: severity + attack_type + mitre_technique   │  │
+│  │ 触发: 每条新事件自动执行                          │  │
+│  └──────────────────────────────────────────────────┘  │
+│                        │                               │
+│                        ▼                               │
+│  <span class="hl-purple">Layer 2: 事件关联</span>                                    │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │ 输入: 时间窗口内的多个分类后事件                   │  │
+│  │ 输出: 攻击链还原 + 关联分析 + 影响评估            │  │
+│  │ 触发: 每小时 / 事件数阈值 / 用户手动              │  │
+│  └──────────────────────────────────────────────────┘  │
+│                        │                               │
+│                        ▼                               │
+│  <span class="hl-green">Layer 3: 报告生成</span>                                    │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │ 输入: 时间范围 + 关联结果                         │  │
+│  │ 输出: 安全态势报告（自然语言 + 统计数据）          │  │
+│  │ 触发: 用户提问 / 定时任务                         │  │
+│  └──────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">实施步骤</h3>
+  <ol class="steps">
+    <li><strong>事件分类服务</strong>：<code>server/services/ai_analyzer.py</code> — 收到 syslog/snmp trap/suricata alert 后，自动调用 GLM-4 判断严重度和攻击类型</li>
+    <li><strong>事件关联引擎</strong>：跨设备、跨协议关联多个告警，还原攻击链。例如：端口扫描(A) → 暴力破解(B) → 异常登录(C) 三条告警关联为一次攻击</li>
+    <li><strong>Chat 改造</strong>：<code>POST /api/ai/analyze</code> 和 <code>POST /api/ai/correlate</code> — 输入"最近一小时有什么异常"→ 返回 AI 分析结果而非工具列表</li>
+    <li><strong>报告生成</strong>：<code>POST /api/ai/report</code> — 每日/每周自动生成安全态势报告（Markdown 格式）</li>
+  </ol>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">涉及文件</h3>
+  <div class="file-list">
+    <div class="file-item">server/services/ai_analyzer.py <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">server/api/ai.py <span class="tag tag-new">NEW</span></div>
+    <div class="file-item">server/api/chat.py <span class="tag tag-mod">MOD</span></div>
+    <div class="file-item">server/main.py <span class="tag tag-mod">MOD</span></div>
+  </div>
+
+  <div class="effort effort-medium">
+    <strong>投入评估：</strong>中等 &mdash; 核心是 prompt engineering + 事件聚合逻辑。差异化卖点，提升学术价值。
+  </div>
+</div>
+
+<!-- ===== SECTION 5 ===== -->
+<div class="section" id="s5">
+  <div class="section-header">
+    <div class="section-number" style="background:rgba(34,197,94,0.12);color:var(--low);">5</div>
+    <h2>产品定位 — IoT 专项补充，而非替代</h2>
+    <span class="badge p2">P2 优先</span>
+  </div>
+
+  <div class="problem-card">
+    <span class="label">当前问题</span>
+    无法替代任何成熟安全产品 — Snort/IDS、SIEM（Splunk/ELK）、漏洞扫描（Nessus）都做得更好。试图"全做"只会全做不好。
+  </div>
+
+  <div class="solution-card">
+    <span class="label">改进方案</span>
+    <strong>不替代，做补充。</strong> CyberClaw 的真正价值是填补传统 SIEM/IDS 管不到的 IoT 盲区。摄像头、传感器、智能插座这些设备通常不在企业安全体系管理范围内。
+  </div>
+
+  <div class="arch-diagram">
+<pre>
+┌───────────────────────────────────────────────────────────┐
+│                    <span class="hl-dim">企业安全架构</span>                              │
+│                                                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
+│  │   <span class="hl-dim">SIEM</span>       │  │   <span class="hl-dim">IDS</span>        │  │  <span class="hl-dim">漏洞扫描</span>   │       │
+│  │ Splunk/ELK  │  │Suricata/    │  │ Nessus/     │       │
+│  │ 日志聚合    │  │ Snort       │  │ OpenVAS     │       │
+│  │ 全局关联    │  │ 网络层检测  │  │ 定期扫描    │       │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘       │
+│         │                │                │               │
+│         └────────────────┼────────────────┘               │
+│                          │  CEF/JSON 格式联动              │
+│         ┌────────────────▼────────────────┐               │
+│         │  <span class="hl-accent">CyberClaw — IoT 专项安全运营</span>      │               │
+│         │                                 │               │
+│         │  ✓ IoT 设备自动发现与指纹识别    │               │
+│         │  ✓ 多协议采集 (SNMP/MQTT/Syslog)│               │
+│         │  ✓ 默认密码 / 弱配置检测        │               │
+│         │  ✓ 设备级隔离 (iptables/交换机)  │               │
+│         │  ✓ IoT 安全基线审计 (CIS/等保)  │               │
+│         │  ✓ MQTT / CoAP 异常检测         │               │
+│         │  ✓ MITRE ATT&amp;CK 检测验证       │               │
+│         │                                 │               │
+│         │  → 输出 CEF/JSON 告警到 SIEM    │               │
+│         │  → 从 SIEM 接收 IoT 相关联规则  │               │
+│         └─────────────────────────────────┘               │
+└───────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">CyberClaw vs 传统安全产品</h3>
+
+  <table class="comparison">
+    <tr>
+      <th>能力维度</th>
+      <th>Splunk/ELK</th>
+      <th>Suricata/Snort</th>
+      <th>Nessus</th>
+      <th style="color:var(--accent)">CyberClaw</th>
+    </tr>
+    <tr>
+      <td>IoT 设备发现</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td>弱</td>
+      <td style="color:var(--accent)"><strong>强</strong></td>
+    </tr>
+    <tr>
+      <td>IoT 协议理解</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td>部分</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--accent)"><strong>MQTT/CoAP/Modbus</strong></td>
+    </tr>
+    <tr>
+      <td>默认密码检测</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td>部分</td>
+      <td style="color:var(--accent)"><strong>专项</strong></td>
+    </tr>
+    <tr>
+      <td>设备级隔离</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--accent)"><strong>iptables/交换机端口</strong></td>
+    </tr>
+    <tr>
+      <td>通用日志分析</td>
+      <td style="color:var(--accent)"><strong>强</strong></td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--text-dim)">弱</td>
+    </tr>
+    <tr>
+      <td>网络层检测</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--accent)"><strong>强</strong></td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--text-dim)">依赖 Suricata</td>
+    </tr>
+    <tr>
+      <td>漏洞扫描深度</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--text-dim)">-</td>
+      <td style="color:var(--accent)"><strong>强</strong></td>
+      <td>浅（CVE 查询 + 基线）</td>
+    </tr>
+  </table>
+
+  <h3 style="margin: 24px 0 12px; font-size: 1.1em;">SIEM 联动接口</h3>
+  <ol class="steps">
+    <li><strong>输出告警</strong>：CyberClaw 安全事件以 CEF（Common Event Format）/ JSON 格式发送到 Splunk/ELK，纳入统一 SIEM 分析</li>
+    <li><strong>接收规则</strong>：从 SIEM 接收 IoT 相关的检测规则，动态更新 Suricata 规则集</li>
+    <li><strong>API 联动</strong>：提供 REST API 供 SIEM 调用设备隔离、配置审计等操作</li>
+  </ol>
+
+  <div class="effort effort-low">
+    <strong>投入评估：</strong>低 &mdash; 主要是架构设计和接口定义，代码量少但影响全局。
+  </div>
+</div>
+
+<!-- ===== PRIORITY SUMMARY ===== -->
+<div class="priority-section" id="priority">
+  <h2>实施优先级与路线图</h2>
+
+  <table class="comparison">
+    <tr>
+      <th style="width:80px">优先级</th>
+      <th>改进项</th>
+      <th style="width:120px">预计工作量</th>
+      <th>理由</th>
+    </tr>
+    <tr>
+      <td style="text-align:center"><span class="priority-tag p0" style="font-size:0.9em">P0</span></td>
+      <td><strong>HUD 实用化</strong> — 告警面板 + 趋势图 + 日志检索</td>
+      <td>3-5 天</td>
+      <td>没有可用界面，其他能力无法展示</td>
+    </tr>
+    <tr>
+      <td style="text-align:center"><span class="priority-tag p0" style="font-size:0.9em">P0</span></td>
+      <td><strong>集成 Suricata</strong> — 真实流量检测引擎</td>
+      <td>2-3 天</td>
+      <td>"检测"能力的根基，没有检测就没有响应</td>
+    </tr>
+    <tr>
+      <td style="text-align:center"><span class="priority-tag p1" style="font-size:0.9em">P1</span></td>
+      <td><strong>AI 威胁分析</strong> — 事件分类 + 关联 + 报告</td>
+      <td>2-3 天</td>
+      <td>差异化卖点，提升学术价值和答辩效果</td>
+    </tr>
+    <tr>
+      <td style="text-align:center"><span class="priority-tag p2" style="font-size:0.9em">P2</span></td>
+      <td><strong>MITRE 场景框架</strong> — 检测验证 + 覆盖率报告</td>
+      <td>2-3 天</td>
+      <td>演示价值，对答辩/展示有用</td>
+    </tr>
+    <tr>
+      <td style="text-align:center"><span class="priority-tag p2" style="font-size:0.9em">P2</span></td>
+      <td><strong>SIEM 联动接口</strong> — CEF 输出 + API 对接</td>
+      <td>1-2 天</td>
+      <td>体现工程完整性</td>
+    </tr>
+  </table>
+
+  <div class="arch-diagram" style="margin-top:24px;">
+<pre>
+<span class="hl-dim">时间线（建议顺序）：</span>
+
+Week 1  <span class="hl-accent">━━━━━━━━━</span> HUD 实用化（告警面板 + 趋势图 + 日志检索）
+Week 2  <span class="hl-accent">━━━━━━━</span>   Suricata 集成 + IoT 规则集
+Week 3  <span class="hl-purple">━━━━━━━━</span>  AI 威胁分析（事件分类 + 关联引擎）
+Week 4  <span class="hl-orange">━━━━━━━</span>   MITRE 场景 + SIEM 联动 + 整体测试
+</pre>
+  </div>
+</div>
+
+</div>
+
+<!-- ===== FOOTER ===== -->
+<div class="footer">
+  CyberClaw Improvement Plan &mdash; Generated for project roadmap planning<br>
+  <span style="color:var(--text-dim)">Sense → Detect → Shield → Review</span>
+</div>
+
+</body>
+</html>

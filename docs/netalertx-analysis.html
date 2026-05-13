@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetAlertX 代码分析报告 — CyberClaw 参考研究</title>
+<style>
+  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149; --orange: #d29922; --purple: #bc8cff; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height:1.7; }
+  .container { max-width:1200px; margin:0 auto; padding:20px; }
+  h1 { text-align:center; font-size:2em; margin:40px 0 10px; color:var(--accent); }
+  h1 .sub { display:block; font-size:.5em; color:var(--muted); font-weight:400; margin-top:8px; }
+  h2 { color:var(--green); font-size:1.4em; margin:36px 0 16px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+  h3 { color:var(--accent); font-size:1.1em; margin:24px 0 12px; }
+  h4 { color:var(--purple); font-size:1em; margin:16px 0 8px; }
+  p, li { color:#c9d1d9; }
+  p { margin:8px 0; }
+  ul, ol { padding-left:24px; margin:8px 0; }
+  li { margin:4px 0; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:20px; margin:16px 0; }
+  .card-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px,1fr)); gap:16px; margin:16px 0; }
+  .metric-row { display:flex; gap:12px; flex-wrap:wrap; margin:16px 0; }
+  .metric { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px 20px; flex:1; min-width:150px; text-align:center; }
+  .metric .val { font-size:1.8em; font-weight:700; }
+  .metric .lbl { font-size:.85em; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; margin:12px 0; font-size:.9em; }
+  th { background:rgba(88,166,255,.1); color:var(--accent); text-align:left; padding:10px 12px; border:1px solid var(--border); font-weight:600; }
+  td { padding:8px 12px; border:1px solid var(--border); color:#c9d1d9; }
+  tr:nth-child(even) td { background:rgba(255,255,255,.02); }
+  code { background:rgba(88,166,255,.1); color:var(--accent); padding:2px 6px; border-radius:4px; font-size:.88em; font-family:'JetBrains Mono', monospace; }
+  pre { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:14px; overflow-x:auto; margin:12px 0; font-size:.85em; line-height:1.5; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:.78em; font-weight:600; }
+  .badge-green { background:rgba(63,185,80,.15); color:var(--green); border:1px solid rgba(63,185,80,.3); }
+  .badge-blue { background:rgba(88,166,255,.15); color:var(--accent); border:1px solid rgba(88,166,255,.3); }
+  .badge-orange { background:rgba(210,153,34,.15); color:var(--orange); border:1px solid rgba(210,153,34,.3); }
+  .badge-red { background:rgba(248,81,73,.15); color:var(--red); border:1px solid rgba(248,81,73,.3); }
+  .badge-purple { background:rgba(188,140,255,.15); color:var(--purple); border:1px solid rgba(188,140,255,.3); }
+  .flow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  .flow-step { background:var(--card); border:1px solid var(--accent); border-radius:6px; padding:8px 14px; font-size:.85em; }
+  .flow-arrow { color:var(--accent); font-size:1.2em; }
+  .toc { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:20px 28px; margin:20px 0; }
+  .toc a { color:var(--accent); text-decoration:none; }
+  .toc a:hover { text-decoration:underline; }
+  .toc ul { list-style:none; padding-left:16px; }
+  .toc>ul { padding-left:0; }
+  .gap-table td:nth-child(2) { color:var(--red); }
+  .gap-table td:nth-child(3) { color:var(--green); }
+  .highlight { border-left:3px solid var(--accent); padding-left:12px; margin:12px 0; color:var(--muted); font-style:italic; }
+  @media (max-width:768px) { .card-grid { grid-template-columns:1fr; } .metric-row { flex-direction:column; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>NetAlertX 代码全面分析报告
+  <span class="sub">CyberClaw IoT 安全平台参考研究 | 分析日期：2026-05-13</span>
+</h1>
+
+<div class="toc">
+  <strong style="color:var(--accent)">目录</strong>
+  <ul>
+    <li><a href="#overview">1. 项目概览</a></li>
+    <li><a href="#arch">2. 架构分析</a></li>
+    <li><a href="#datamodel">3. 数据模型</a></li>
+    <li><a href="#plugins">4. 插件扫描系统</a></li>
+    <li><a href="#frontend">5. 前端与通知系统</a></li>
+    <li><a href="#workflow">6. 工作流引擎</a></li>
+    <li><a href="#mcp">7. MCP 集成</a></li>
+    <li><a href="#compare">8. 与 CyberClaw 对比</a></li>
+    <li><a href="#takeaway">9. 关键借鉴点</a></li>
+  </ul>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="overview">1. 项目概览</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<div class="metric-row">
+  <div class="metric"><div class="val" style="color:var(--accent)">5,975</div><div class="lbl">GitHub Stars</div></div>
+  <div class="metric"><div class="val" style="color:var(--green)">197</div><div class="lbl">Python 文件</div></div>
+  <div class="metric"><div class="val" style="color:var(--purple)">48</div><div class="lbl">插件总数</div></div>
+  <div class="metric"><div class="val" style="color:var(--orange)">51</div><div class="lbl">PHP 文件</div></div>
+</div>
+
+<div class="card">
+  <p><strong>NetAlertX</strong>（原 Pi.Alert）是一个开源的网络设备发现、监控和告警平台。核心定位：<strong>持续发现网络中的所有设备，监控在线/离线状态，异常时即时通知</strong>。</p>
+  <p>与 CyberClaw 的关键区别：NetAlertX 是<strong>被动+主动混合的设备发现工具</strong>，不做漏洞扫描或攻击检测，但在"设备发现"和"状态监控"两个维度做得非常深。</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="arch">2. 架构分析</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<h3>2.1 整体架构：双进程模型</h3>
+
+<div class="card">
+  <div class="flow">
+    <div class="flow-step"><strong>主进程</strong><br><code>__main__.py</code><br>无限循环：扫描调度→插件执行→事件处理→通知</div>
+    <div class="flow-arrow">⟷</div>
+    <div class="flow-step"><strong>SQLite</strong><br><code>app.db</code><br>共享数据库，WAL 模式</div>
+    <div class="flow-arrow">⟷</div>
+    <div class="flow-step"><strong>API 进程</strong><br><code>api_server_start.py</code><br>Flask: REST + GraphQL + SSE + MCP</div>
+  </div>
+  <p class="highlight">两个进程通过 SQLite 和 JSON 文件通信。API 层不直连数据库，而是读主进程"物化"好的 JSON 文件（<code>/tmp/api/table_*.json</code>），简化了并发问题。</p>
+</div>
+
+<h3>2.2 主循环流程</h3>
+
+<pre>while True:
+  1. importConfigs()              ← 重新加载配置和插件
+  2. run_plugin_scripts("once")   ← 启动时执行一次
+  3. check_and_run_user_event()   ← 处理前端用户事件
+  4. update_api()                 ← 更新 API JSON 文件
+  5. if 1分钟已过:
+     a. run_plugin_scripts("schedule")            ← 定时扫描
+     b. run_plugin_scripts("always_after_scan")   ← 扫描后处理
+     c. process_scan()                            ← 扫描结果入库
+     d. run_plugin_scripts("on_new_device")       ← 新设备触发
+     e. run_plugin_scripts("before_name_updates") ← 名称更新前
+     f. update_devices_names()                    ← DNS/mDNS 解析
+     g. get_notifications()                       ← 生成通知
+     h. run_plugin_scripts("on_notification")     ← 通知触发
+  6. WorkflowManager.process()    ← 工作流引擎
+  7. sleep(5秒)</pre>
+
+<h3>2.3 关键技术选型</h3>
+
+<table>
+  <tr><th>层级</th><th>NetAlertX</th><th>CyberClaw 对比</th></tr>
+  <tr><td>后端框架</td><td>Flask（同步）</td><td>FastAPI（异步）</td></tr>
+  <tr><td>数据库</td><td>SQLite + WAL</td><td>内存 deque（无持久化）</td></tr>
+  <tr><td>API</td><td>REST + GraphQL + SSE</td><td>REST + WebSocket</td></tr>
+  <tr><td>前端</td><td>PHP + jQuery + AdminLTE</td><td>Three.js + Vite + ECharts</td></tr>
+  <tr><td>认证</td><td>Bearer Token + 密码登录</td><td>无认证</td></tr>
+  <tr><td>插件协议</td><td>subprocess + 管道文件</td><td>FastMCP stdio</td></tr>
+  <tr><td>实时推送</td><td>SSE（Server-Sent Events）</td><td>WebSocket</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="datamodel">3. 数据模型</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<h3>3.1 核心表结构</h3>
+
+<div class="card-grid">
+  <div class="card">
+    <h4>Devices 表（50+ 列）</h4>
+    <p><code>devMac</code> (PK) → MAC 地址</p>
+    <p><code>devName, devOwner, devType, devVendor</code> → 基本信息</p>
+    <p><code>devLastIP, devFQDN</code> → 网络地址</p>
+    <p><code>devPresentLastScan</code> → 是否在线</p>
+    <p><code>devIsNew, devIsArchived, devFavorite</code> → 状态标记</p>
+    <p><code>devParentMAC, devParentPort</code> → 拓扑关系</p>
+    <p><code>devAlertDown, devAlertEvents</code> → 告警配置</p>
+    <p><code>devXxxSource</code> (9个) → <span class="badge badge-green">字段级来源追踪</span></p>
+    <p><code>devCustomProps</code> → 自定义属性 JSON</p>
+  </div>
+  <div class="card">
+    <h4>Events 表</h4>
+    <p><code>eveMac, eveIp</code> → 关联设备</p>
+    <p><code>eveDateTime</code> → 事件时间</p>
+    <p><code>eveEventType</code> → New Device / Connected / Disconnected / Device Down / Down Reconnected</p>
+    <p><code>evePairEventRowid</code> → 配对事件 ID</p>
+    <h4>Sessions 表</h4>
+    <p><code>sesDateTimeConnection / Disconnection</code></p>
+    <p><code>sesStillConnected</code></p>
+    <h4>CurrentScan 表</h4>
+    <p>每次扫描的临时结果，循环开始时 DROP 并重建</p>
+  </div>
+</div>
+
+<h3>3.2 字段来源追踪机制</h3>
+
+<div class="card">
+  <p>每个可被插件更新的字段都有一个对应的 <code>devXxxSource</code> 列，值可以是：</p>
+  <table>
+    <tr><th>来源值</th><th>含义</th></tr>
+    <tr><td><code>USER</code></td><td>用户手动设置，任何插件不可覆盖</td></tr>
+    <tr><td><code>LOCKED</code></td><td>锁定状态，等同 USER</td></tr>
+    <tr><td><code>NEWDEV</code></td><td>新设备创建时设置，首次扫描后可被覆盖</td></tr>
+    <tr><td><code>ARPSCAN</code></td><td>ARP 扫描插件设置，其他插件可按优先级覆盖</td></tr>
+    <tr><td><code>NMAPDEV</code></td><td>Nmap 设备扫描设置</td></tr>
+  </table>
+  <p class="highlight">这个机制解决了多插件对同一字段的竞争问题。CyberClaw 的 12 个 MCP Server 缺少类似机制，可能导致数据冲突。</p>
+</div>
+
+<h3>3.3 数据库视图</h3>
+
+<table>
+  <tr><th>视图</th><th>用途</th></tr>
+  <tr><td><code>DevicesView</code></td><td>核心视图，计算 devStatus、devIsSleeping、devFlapping</td></tr>
+  <tr><td><code>Events_Devices</code></td><td>Events LEFT JOIN Devices</td></tr>
+  <tr><td><code>LatestEventsPerMAC</code></td><td>每个设备最新事件</td></tr>
+  <tr><td><code>Convert_Events_to_Sessions</code></td><td>事件对转换为会话</td></tr>
+  <tr><td><code>LatestDeviceScan</code></td><td>Devices LEFT JOIN 最新 CurrentScan</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="plugins">4. 插件扫描系统</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<h3>4.1 插件架构</h3>
+
+<div class="card">
+  <p>每个插件目录包含：</p>
+  <ul>
+    <li><code>config.json</code> — 插件元数据、设置、参数、列映射</li>
+    <li><code>script.py</code> — 执行脚本</li>
+  </ul>
+  <p>插件通过 <code>Plugin_Objects</code> 基类输出标准格式的管道数据（<code>|</code> 分隔），主进程统一解析。</p>
+</div>
+
+<h3>4.2 全部 48 个插件一览</h3>
+
+<table>
+  <tr><th>类别</th><th>插件</th><th>数量</th></tr>
+  <tr>
+    <td><span class="badge badge-blue">设备扫描</span></td>
+    <td>arp_scan, nmap_dev_scan, icmp_scan, snmp_discovery, pihole_api_scan, dhcp_leases, omada_sdn, fritzbox, mikrotik_scan, asuswrt_import, unifi_import, freebox, luci_import, avahi_scan, ipneigh, nbtscan_scan, dig_scan, nslookup_scan</td>
+    <td>18</td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-green">其他监控</span></td>
+    <td>nmap_scan（端口扫描）, website_monitor, internet_ip, internet_speedtest, dhcp_servers</td>
+    <td>5</td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-orange">通知发布</span></td>
+    <td>webhook, email, mqtt, ntfy, pushover, pushsafer, telegram, apprise</td>
+    <td>8</td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-purple">系统核心</span></td>
+    <td>vendor_update, db_cleanup, csv_backup, maintenance, sync, ui_settings, set_password, notification_processing, custom_props, workflows, ddns_update, wake_on_lan</td>
+    <td>12</td>
+  </tr>
+</table>
+
+<h3>4.3 核心扫描插件详解</h3>
+
+<div class="card-grid">
+  <div class="card">
+    <h4>arp_scan（主力扫描器）</h4>
+    <p><span class="badge badge-blue">Layer 2</span> <span class="badge badge-green">推荐</span></p>
+    <ul>
+      <li>调用 <code>arp-scan</code> 发送 ARP 请求</li>
+      <li>支持多子网、多接口、持续扫描模式</li>
+      <li>输出：MAC + IP + 厂商</li>
+      <li>支持 VLAN 接口</li>
+    </ul>
+    <p>适用：发现同网段所有设备，包括沉默设备</p>
+  </div>
+  <div class="card">
+    <h4>nmap_dev_scan（深度扫描）</h4>
+    <p><span class="badge badge-blue">Layer 2</span></p>
+    <ul>
+      <li>调用 <code>nmap -sn</code> 进行主机发现</li>
+      <li>解析 XML 输出获取 hostname、厂商</li>
+      <li>支持为无 MAC 设备生成假 MAC</li>
+    </ul>
+    <p>适用：获取更丰富的设备信息</p>
+  </div>
+  <div class="card">
+    <h4>icmp_scan（在线检测）</h4>
+    <p><span class="badge badge-blue">Layer 3</span></p>
+    <ul>
+      <li>ping 模式：逐个 ping 数据库中的设备</li>
+      <li>fping 模式：批量扫描，支持 CIDR</li>
+      <li>检测设备在线/离线</li>
+    </ul>
+    <p>适用：快速检测设备状态变化</p>
+  </div>
+  <div class="card">
+    <h4>路由器集成（6种）</h4>
+    <p><span class="badge badge-orange">API 接入</span></p>
+    <ul>
+      <li><strong>Fritz!Box</strong> — TR-064 协议</li>
+      <li><strong>MikroTik</strong> — RouterOS API</li>
+      <li><strong>Asuswrt</strong> — 异步 API</li>
+      <li><strong>Omada SDN</strong> — TP-Link 控制器</li>
+      <li><strong>UniFi</strong> — Ubiquiti API</li>
+      <li><strong>Pi-hole</strong> — REST API</li>
+    </ul>
+    <p>适用：从路由器/DHCP 直接获取设备列表</p>
+  </div>
+</div>
+
+<h3>4.4 设备识别与指纹</h3>
+
+<div class="card">
+  <h4>多级设备属性猜测</h4>
+  <p><code>device_heuristics.py</code> 的 <code>guess_device_attributes()</code> 按优先级匹配：</p>
+  <ol>
+    <li><strong>严格 MAC+Vendor 匹配</strong> — MAC 前缀 + 厂商名组合</li>
+    <li><strong>设备名正则匹配</strong> — 通过名称模式（如 "iPhone"、"Galaxy"）</li>
+    <li><strong>随机 MAC 检测</strong> — 跳过本地管理地址</li>
+    <li><strong>宽松 Vendor 匹配</strong> — 仅厂商名子串</li>
+    <li><strong>IP 地址匹配</strong> — 网关 IP = 路由器</li>
+  </ol>
+  <p>规则存储在 <code>back/device_heuristics_rules.json</code>，支持覆盖。</p>
+  <h4>名称解析链</h4>
+  <p>DNS DIG → mDNS/Bonjour → nslookup → NetBIOS，按优先级依次尝试。</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="frontend">5. 前端与通知系统</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<h3>5.1 页面结构</h3>
+
+<table>
+  <tr><th>页面</th><th>文件</th><th>功能</th></tr>
+  <tr><td>设备列表</td><td><code>devices.php</code></td><td>DataTables 分页，统计卡片，在线历史图表</td></tr>
+  <tr><td>设备详情</td><td><code>deviceDetails.php</code></td><td>6 个 Tab：基本信息/工具/会话/日历/事件/插件</td></tr>
+  <tr><td>网络拓扑</td><td><code>network.php</code></td><td>Treeviz 树形拓扑，递归构建父子关系</td></tr>
+  <tr><td>事件列表</td><td><code>events.php</code></td><td>6 种事件类型统计 + 服务端分页</td></tr>
+  <tr><td>在线日历</td><td><code>presence.php</code></td><td>设备在线/离线时段日历视图</td></tr>
+  <tr><td>通知中心</td><td><code>userNotifications.php</code></td><td>应用内通知列表</td></tr>
+  <tr><td>工作流编辑</td><td><code>workflowsCore.php</code></td><td>可视化工作流配置</td></tr>
+  <tr><td>系统设置</td><td><code>settings.php</code></td><td>全局设置 + 插件设置</td></tr>
+</table>
+
+<h3>5.2 告警通知系统</h3>
+
+<div class="card">
+  <h4>5 种告警类型</h4>
+  <table>
+    <tr><th>类型</th><th>触发条件</th></tr>
+    <tr><td><span class="badge badge-green">new_devices</span></td><td>扫描发现数据库中不存在的 MAC 地址</td></tr>
+    <tr><td><span class="badge badge-red">down_devices</span></td><td>设备离线超过 alert_down_time 分钟</td></tr>
+    <tr><td><span class="badge badge-blue">down_reconnected</span></td><td>之前离线的设备重新上线</td></tr>
+    <tr><td><span class="badge badge-orange">events</span></td><td>连接/断开/IP 变更事件</td></tr>
+    <tr><td><span class="badge badge-purple">plugins</span></td><td>插件状态变化</td></tr>
+  </table>
+
+  <h4>8 种通知渠道</h4>
+  <p>Webhook、Email (SMTP)、Telegram Bot、Pushover、ntfy、Pushsafer、Apprise（多渠道路由）、MQTT</p>
+
+  <h4>防误报机制</h4>
+  <ul>
+    <li>设备可配置 <code>devAlertDown = 0</code> 关闭离线告警</li>
+    <li>设备可配置 <code>devCanSleep</code> + sleep_time 窗口（睡眠期间不告警）</li>
+    <li><code>skip_repeated_notifications()</code> 根据 <code>devSkipRepeated</code> 间隔跳过重复通知</li>
+    <li>SQL 条件过滤器进一步精确告警范围</li>
+  </ul>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="workflow">6. 工作流引擎</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<div class="card">
+  <p>基于 <code>workflows.json</code> 配置的事件驱动自动化引擎：</p>
+  <div class="flow">
+    <div class="flow-step"><strong>Trigger</strong><br>匹配 AppEvents<br>（insert/update/delete）</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><strong>Condition</strong><br>AND/OR 嵌套条件<br>equals/contains/regex</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><strong>Action</strong><br>update_field<br>delete_device<br>run_plugin</div>
+  </div>
+  <p class="highlight">这是 NetAlertX 最接近 SOAR 的能力。通过工作流可以实现"发现新设备 → 自动运行 Nmap 扫描 → 如果开放 23 端口 → 标记为高危"等自动化场景。</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="mcp">7. MCP 集成</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<div class="card">
+  <p>NetAlertX 也实现了 MCP 协议（<code>mcp_endpoint.py</code>），但方式与 CyberClaw 不同：</p>
+  <table>
+    <tr><th>维度</th><th>NetAlertX</th><th>CyberClaw</th></tr>
+    <tr><td>MCP 方式</td><td>HTTP/SSE + JSON-RPC 2.0，包装现有 REST API</td><td>FastMCP stdio，每个工具独立进程</td></tr>
+    <tr><td>工具定义</td><td>从 OpenAPI 规范自动转换</td><td>手动用 @mcp_tool 装饰器</td></tr>
+    <tr><td>工具执行</td><td>loopback HTTP 调用内部 API</td><td>直接函数调用</td></tr>
+    <tr><td>会话管理</td><td>5 分钟超时自动清理</td><td>无会话概念</td></tr>
+  </table>
+  <p class="highlight">NetAlertX 的"MCP 包装 REST"模式更灵活——新增 REST 端点后 MCP 自动暴露，无需额外代码。</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="compare">8. 与 CyberClaw 对比分析</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<h3>8.1 功能对比矩阵</h3>
+
+<table>
+  <tr><th>能力维度</th><th>NetAlertX</th><th>CyberClaw</th><th>差距评估</th></tr>
+  <tr>
+    <td><strong>设备发现</strong></td>
+    <td>18 种扫描器（ARP/Nmap/ICMP/SNMP/DHCP/路由器API）</td>
+    <td>JSON 配置文件 12 个假设备</td>
+    <td><span class="badge badge-red">巨大差距</span></td>
+  </tr>
+  <tr>
+    <td><strong>数据持久化</strong></td>
+    <td>SQLite + WAL + 10 张表 + 6 个视图 + 24 个索引</td>
+    <td>内存 deque（maxlen=2000）</td>
+    <td><span class="badge badge-red">巨大差距</span></td>
+  </tr>
+  <tr>
+    <td><strong>设备指纹</strong></td>
+    <td>MAC OUI 查表 + 多级启发式规则 + DNS/mDNS/NetBIOS 名称解析</td>
+    <td>6 个厂商签名</td>
+    <td><span class="badge badge-red">巨大差距</span></td>
+  </tr>
+  <tr>
+    <td><strong>状态监控</strong></td>
+    <td>持续扫描，5 种事件类型，会话追踪，在线日历</td>
+    <td>5-state FSM，手动触发</td>
+    <td><span class="badge badge-red">巨大差距</span></td>
+  </tr>
+  <tr>
+    <td><strong>告警通知</strong></td>
+    <td>5 种告警类型 × 8 种通知渠道，防误报机制</td>
+    <td>WebSocket 推送到前端</td>
+    <td><span class="badge badge-orange">大差距</span></td>
+  </tr>
+  <tr>
+    <td><strong>工作流/SOAR</strong></td>
+    <td>事件驱动工作流引擎（Trigger→Condition→Action）</td>
+    <td>无</td>
+    <td><span class="badge badge-orange">大差距</span></td>
+  </tr>
+  <tr>
+    <td><strong>API 认证</strong></td>
+    <td>Bearer Token + 密码登录 + 常量时间比较</td>
+    <td>无认证，CORS 全开</td>
+    <td><span class="badge badge-orange">大差距</span></td>
+  </tr>
+  <tr>
+    <td><strong>拓扑可视化</strong></td>
+    <td>Treeviz 2D 树形拓扑</td>
+    <td>Three.js 3D 拓扑 + 攻击动画</td>
+    <td><span class="badge badge-green">CyberClaw 更好</span></td>
+  </tr>
+  <tr>
+    <td><strong>威胁检测</strong></td>
+    <td>仅设备在线/离线变化检测</td>
+    <td>Suricata IDS + FSM 状态映射</td>
+    <td><span class="badge badge-green">CyberClaw 更好</span></td>
+  </tr>
+  <tr>
+    <td><strong>AI/Agent</strong></td>
+    <td>无 AI 能力，仅 MCP 暴露 API</td>
+    <td>MCP + LLM Chat（基础）</td>
+    <td><span class="badge badge-green">CyberClaw 潜力更大</span></td>
+  </tr>
+</table>
+
+<h3>8.2 架构对比图</h3>
+
+<pre>  NetAlertX                              CyberClaw
+  ─────────                              ─────────
+  ┌──────────┐                          ┌──────────┐
+  │ 18 扫描器  │                          │ JSON配置  │
+  │ ARP/Nmap  │                          │ 12假设备  │
+  │ SNMP/DHCP │                          │          │
+  │ 路由器API  │                          │ nmap-scan│
+  └─────┬─────┘                          └────┬─────┘
+        │ pipe文件                             │ MCP stdio
+  ┌─────▼─────┐                          ┌────▼─────┐
+  │ 主循环     │                          │ FastAPI   │
+  │ 去重/比对  │                          │ broadcast │
+  │ 事件生成   │                          │          │
+  └─────┬─────┘                          └────┬─────┘
+        │ SQLite                              │ WebSocket
+  ┌─────▼─────┐   ┌──────┐           ┌─────▼─────┐
+  │ SQLite DB  │──▶│Flask │           │ 内存 deque │
+  │ 持久化存储  │   │ API  │           │ 无持久化   │
+  └───────────┘   └──┬───┘           └─────┬─────┘
+                     │ SSE/REST              │ WebSocket
+  ┌──────────┐   ┌──▼───┐           ┌──────▼──────┐
+  │ 工作流引擎 │   │PHP+JS│           │ Three.js HUD│
+  │ Trigger→  │   │前端   │           │ + Dashboard │
+  │ Condition→│   └──────┘           └─────────────┘
+  │ Action    │
+  └──────────┘</pre>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="takeaway">9. 关键借鉴点</h2>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<h3>9.1 CyberClaw 应该从 NetAlertX 学习什么</h3>
+
+<div class="card-grid">
+  <div class="card" style="border-left:3px solid var(--red)">
+    <h4>P0：SQLite 数据持久化</h4>
+    <p><strong>NetAlertX 做法</strong>：SQLite + WAL 模式，10 张表 + 6 个视图 + 24 个索引。主进程写 DB，API 读物化 JSON。</p>
+    <p><strong>CyberClaw 应做</strong>：替换内存 deque 为 SQLite。最小改动——在现有 service 类中加 DB 写入。</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--red)">
+    <h4>P0：真实网络设备发现</h4>
+    <p><strong>NetAlertX 做法</strong>：18 种扫描源，插件管道统一输出格式，主循环去重比对。</p>
+    <p><strong>CyberClaw 应做</strong>：实现 ARP 扫描 + nmap 发现。新设备自动入库替代 topology.json。</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--orange)">
+    <h4>P1：多源扫描插件体系</h4>
+    <p><strong>NetAlertX 做法</strong>：每个扫描器独立目录，config.json 定义元数据，Plugin_Objects 统一输出格式。</p>
+    <p><strong>CyberClaw 应做</strong>：统一 12 个 MCP Server 的输出格式，支持注册新扫描源。</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--orange)">
+    <h4>P1：字段来源追踪</h4>
+    <p><strong>NetAlertX 做法</strong>：每个字段有 devXxxSource 列，USER/LOCKED 不可被插件覆盖。</p>
+    <p><strong>CyberClaw 应做</strong>：多 MCP Server 对同一设备属性写入时需要冲突解决机制。</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--accent)">
+    <h4>P2：工作流引擎</h4>
+    <p><strong>NetAlertX 做法</strong>：Trigger + Condition + Action 三段式，JSON 配置。</p>
+    <p><strong>CyberClaw 应做</strong>：实现 "告警→扫描→CVE查询→隔离建议" 的自动化链。</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--accent)">
+    <h4>P2：API 认证 + Bearer Token</h4>
+    <p><strong>NetAlertX 做法</strong>：自动生成 Token，常量时间比较，支持 Header/QueryParam。</p>
+    <p><strong>CyberClaw 应做</strong>：添加 JWT 或 Bearer Token 认证。</p>
+  </div>
+</div>
+
+<h3>9.2 CyberClaw 不应该照搬什么</h3>
+
+<div class="card">
+  <ul>
+    <li><strong>PHP 前端</strong> — NetAlertX 用 PHP + jQuery，这是 2015 年的技术选型。CyberClaw 的 Three.js + Vite 更现代。</li>
+    <li><strong>同步 Flask</strong> — NetAlertX 用同步 Flask，CyberClaw 的 FastAPI 异步架构更适合实时场景。</li>
+    <li><strong>管道文件通信</strong> — NetAlertX 用 <code>|</code> 分隔的文本文件在插件和主进程间通信，CyberClaw 的 MCP stdio 协议更规范。</li>
+    <li><strong>仅在线/离线检测</strong> — NetAlertX 不做漏洞扫描、威胁检测、安全分析。CyberClaw 在安全检测维度更强。</li>
+  </ul>
+</div>
+
+<h3>9.3 差异化路线建议</h3>
+
+<div class="card" style="border:1px solid var(--green); background:rgba(63,185,80,.05)">
+  <h4 style="color:var(--green)">CyberClaw 的独特定位：AI Agent 驱动的 IoT 安全实验室</h4>
+  <p>NetAlertX 擅长<strong>设备发现和状态监控</strong>，但不做<strong>安全分析</strong>。CyberClaw 应该：</p>
+  <ol>
+    <li>借鉴 NetAlertX 的<strong>设备发现能力</strong>（ARP 扫描 + 多源发现 + 持久化存储）</li>
+    <li>保留 CyberClaw 的<strong>安全分析优势</strong>（Suricata IDS + CVE 查询 + 基线检查）</li>
+    <li>强化 CyberClaw 的<strong>差异化杀手锏</strong>（MCP 工具链 + AI Agent + 3D 可视化）</li>
+  </ol>
+  <p>最终目标：用户说<strong>"分析摄像头 Camera-HK-1 的安全状态"</strong> → AI 自动调 nmap 扫描 + CVE 查询 + Suricata 关联 + 基线检查 → 返回综合分析报告并推荐响应动作。目前市场上<strong>没有</strong>任何开源项目能做到这一点。</p>
+</div>
+
+<div style="text-align:center; color:var(--muted); margin:40px 0 20px; font-size:.85em;">
+  — 报告结束 —<br>
+  数据来源：NetAlertX 源码分析 | 生成时间：2026-05-13 | 分析工具：Claude Code
+</div>
+
+</div>
+</body>
+</html>

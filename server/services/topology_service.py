@@ -213,16 +213,94 @@ def _get_live_topology() -> TopologyResponse | None:
     return TopologyResponse(devices=devices, links=links)
 
 
+def _db_to_topology() -> TopologyResponse | None:
+    """从数据库读取设备列表构建拓扑（优先路径）"""
+    try:
+        from ..services.nx_bridge import get_bridge
+        bridge = get_bridge()
+        # 同步调用 — topology_service 是同步模块
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                return None  # 在 async 上下文中不能阻塞，跳过
+        except RuntimeError:
+            pass
+        db_devices = bridge._sync_get_all_devices()
+        if not db_devices:
+            return None
+
+        import json as _json
+        devices = []
+        links = []
+
+        # First pass: build device list and MAC→dev_id lookup
+        mac_to_id: dict[str, str] = {}
+        for d in db_devices:
+            if isinstance(d, dict):
+                mac = d.get("devMac", "")
+                name = d.get("devName", "") or mac
+                dev_id = name.lower().replace("-", "_").replace(" ", "_") if name else mac.replace(":", "")
+                status = d.get("devStatus", "secure")
+                pos_raw = d.get("devPos", "")
+                pos = None
+                if pos_raw:
+                    try:
+                        pos = _json.loads(pos_raw) if isinstance(pos_raw, str) else pos_raw
+                    except (_json.JSONDecodeError, TypeError):
+                        pos = None
+
+                devices.append(DeviceResponse(
+                    id=dev_id,
+                    name=name or d.get("devLastIP", ""),
+                    type=d.get("devType", "unknown"),
+                    ip=d.get("devLastIP", ""),
+                    mac=mac,
+                    status=status,
+                    pos=pos,
+                    vendor=d.get("devVendor", ""),
+                    model=d.get("devModel", ""),
+                    firmware_version=d.get("devFirmwareVersion", ""),
+                    serial_number=d.get("devSerialNumber", ""),
+                    discovery_method=d.get("devDiscoveryMethod", "scan"),
+                    protocols=_json.loads(d.get("devProtocols", "[]")) if d.get("devProtocols") else None,
+                ))
+                if mac:
+                    mac_to_id[mac.lower()] = dev_id
+
+        # Second pass: build links from devParentMAC
+        for d in db_devices:
+            if isinstance(d, dict):
+                parent_mac = (d.get("devParentMAC") or "").strip()
+                if not parent_mac:
+                    continue  # orphan node — no link
+                parent_id = mac_to_id.get(parent_mac.lower())
+                mac = d.get("devMac", "")
+                name = d.get("devName", "") or mac
+                dev_id = name.lower().replace("-", "_").replace(" ", "_") if name else mac.replace(":", "")
+                if parent_id and parent_id != dev_id:
+                    links.append(LinkResponse(from_=parent_id, to=dev_id))
+
+        return TopologyResponse(devices=devices, links=links)
+    except Exception as e:
+        logger.debug(f"DB topology query failed: {e}")
+        return None
+
+
 def get_topology() -> TopologyResponse:
-    # Try Docker SDK first (works inside Docker/WSL)
+    # 1. 优先从数据库读取（持久化数据）
+    db_topo = _db_to_topology()
+    if db_topo:
+        return db_topo
+    # 2. 尝试 Docker SDK
     live = _get_live_topology()
     if live:
         return live
-    # Try subprocess via WSL (works from Windows host)
+    # 3. 尝试 WSL subprocess
     live = _get_live_topology_subprocess()
     if live:
         return live
-    # Fallback to JSON config
+    # 4. 最终降级到 JSON 配置
     return _config_to_topology()
 
 

@@ -153,6 +153,16 @@ class SyslogReceiver:
             if parsed["severity"] in ("critical", "alert", "emergency"):
                 asyncio.create_task(self._record_to_timeline(event, parsed))
 
+            # Persist to database
+            try:
+                from .nx_bridge import get_bridge
+                asyncio.create_task(get_bridge().record_security_event(
+                    "syslog", event.severity, event.message,
+                    source=event.hostname,
+                    details={"facility": event.facility}))
+            except Exception:
+                pass  # DB not available — continue without persistence
+
         except Exception as e:
             self._stats["errors"] += 1
             logger.error(f"Error processing syslog from {addr}: {e}")

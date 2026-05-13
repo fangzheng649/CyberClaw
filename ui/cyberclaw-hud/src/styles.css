@@ -936,3 +936,44 @@ button, input { font: inherit; }
 }
 .collector-indicator.active { background: #00ff88; box-shadow: 0 0 4px #00ff88; }
 .collector-indicator.inactive { background: #5a6e88; }
+
+/* ── Floating Nav Button ─────────────────────────────────────────── */
+.nav-float {
+  position: fixed;
+  top: 22px;
+  right: 14px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: var(--bg-strong);
+  border: 1px solid var(--line);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
+  transition: all 0.2s ease;
+}
+
+.nav-float:hover {
+  border-color: var(--line-strong);
+  background: rgba(0, 255, 136, 0.06);
+  box-shadow: var(--shadow), 0 0 16px rgba(0, 255, 136, 0.1);
+}
+
+.nav-float-icon {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.nav-float-label {
+  opacity: 0.9;
+}

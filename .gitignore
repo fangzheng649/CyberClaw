@@ -7,3 +7,29 @@ build/
 .env
 .venv/
 node_modules/
+
+# Database
+data/*.db
+data/*.db-journal
+data/*.db-wal
+
+# Screenshots
+screenshot-*.png
+
+# Temporary files
+snapshot-*.txt
+*.tmp
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+.superpowers/
+
+# Reference code (not part of project)
+reference/

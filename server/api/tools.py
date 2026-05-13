@@ -3,9 +3,11 @@ import json
 import uuid
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from ..services.topology_service import get_device, get_device_by_ip
 from ..services.tool_broadcast_service import run_tool_and_broadcast
+from ..services.isolation_service import get_isolation_service
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 
@@ -81,15 +83,60 @@ async def trigger_isolate(body: dict):
         device_id = get_device_id_by_ip(device_ip)
 
     if not device_id:
-        return {"error": "device not found"}, 404
+        return JSONResponse({"error": "device not found"}, status_code=404)
 
     dev = get_device(device_id)
     container = dev.name if dev else ""
+    target_ip = device_ip or (dev.ip if dev else "")
+
+    # Try MCP tool first, fallback to direct isolation service
+    mcp_ok = False
+    try:
+        from ..services.mcp_tool_service import call_tool
+        result = await call_tool(
+            "auto-response", "isolate_device",
+            device_ip=target_ip, reason="security_event",
+        )
+        parsed = result.get("result") if isinstance(result, dict) else result
+        if isinstance(parsed, str):
+            import json as _json
+            try:
+                parsed = _json.loads(parsed)
+            except (_json.JSONDecodeError, TypeError):
+                pass
+        # MCP returned a meaningful result
+        if parsed and not (isinstance(parsed, dict) and parsed.get("error")):
+            mcp_ok = True
+    except Exception:
+        pass  # MCP unavailable — fall through to direct isolation
+
+    if not mcp_ok:
+        iso_svc = get_isolation_service()
+        iso_result = await iso_svc.isolate(target_ip)
+        if iso_result.get("status") in ("isolated", "already_isolated", "recorded"):
+            mcp_ok = True
+
+    # Update device status and record security event via nx_bridge
+    if dev and dev.mac:
+        try:
+            from ..services.nx_bridge import get_bridge
+            bridge = get_bridge()
+            await bridge.update_device_status(dev.mac, "isolated")
+            await bridge.record_security_event(
+                source_type="isolation",
+                severity="high",
+                message=f"Device {device_id} isolated",
+                target=device_id,
+                target_mac=dev.mac,
+                fsm_state="isolated",
+            )
+        except Exception:
+            pass
 
     tid = _task_id()
     asyncio.create_task(run_tool_and_broadcast(
         "auto-response", "isolate_device",
-        {"device_ip": device_ip or (dev.ip if dev else ""), "reason": "security_event"},
+        {"device_ip": target_ip, "reason": "security_event"},
         device_id,
     ))
     return {"task_id": tid, "status": "started", "container": container}
@@ -142,14 +189,58 @@ async def trigger_restore(body: dict):
         device_id = get_device_id_by_ip(device_ip)
 
     if not device_id:
-        return {"error": "device not found"}, 404
+        return JSONResponse({"error": "device not found"}, status_code=404)
 
     dev = get_device(device_id)
+    target_ip = device_ip or (dev.ip if dev else "")
+
+    # Try MCP tool first, fallback to direct isolation service
+    mcp_ok = False
+    try:
+        from ..services.mcp_tool_service import call_tool
+        result = await call_tool(
+            "auto-response", "restore_device",
+            device_ip=target_ip,
+        )
+        parsed = result.get("result") if isinstance(result, dict) else result
+        if isinstance(parsed, str):
+            import json as _json
+            try:
+                parsed = _json.loads(parsed)
+            except (_json.JSONDecodeError, TypeError):
+                pass
+        if parsed and not (isinstance(parsed, dict) and parsed.get("error")):
+            mcp_ok = True
+    except Exception:
+        pass
+
+    if not mcp_ok:
+        iso_svc = get_isolation_service()
+        restore_result = await iso_svc.restore(target_ip)
+        if restore_result.get("status") in ("restored", "not_isolated", "recorded"):
+            mcp_ok = True
+
+    # Update device status and record security event via nx_bridge
+    if dev and dev.mac:
+        try:
+            from ..services.nx_bridge import get_bridge
+            bridge = get_bridge()
+            await bridge.update_device_status(dev.mac, "secure")
+            await bridge.record_security_event(
+                source_type="isolation",
+                severity="info",
+                message=f"Device {device_id} restored",
+                target=device_id,
+                target_mac=dev.mac,
+                fsm_state="secure",
+            )
+        except Exception:
+            pass
 
     tid = _task_id()
     asyncio.create_task(run_tool_and_broadcast(
         "auto-response", "restore_device",
-        {"device_ip": device_ip or (dev.ip if dev else "")},
+        {"device_ip": target_ip},
         device_id,
     ))
     return {"task_id": tid, "status": "started"}
@@ -197,6 +288,19 @@ async def get_snmp_status():
     return get_snmp_service().get_status()
 
 
+@router.post("/snmp/discover-topology")
+async def discover_topology(body: dict = {}):
+    """Discover network topology via SNMP (ARP + bridge table walk)."""
+    switch_ip = body.get("switch_ip", "")
+    community = body.get("community", "public")
+    version = body.get("version", "2c")
+    port = body.get("port", 161)
+    if not switch_ip:
+        return {"status": "error", "message": "switch_ip required"}
+    from ..services.snmp_service import get_snmp_service
+    return await get_snmp_service().discover_topology(switch_ip, community, version, port)
+
+
 # ── MQTT endpoints ───────────────────────────────────────────────
 
 
@@ -238,3 +342,62 @@ async def get_mqtt_messages(limit: int = 50, topic: str = ""):
 async def get_mqtt_status():
     from ..services.mqtt_service import get_mqtt_service
     return get_mqtt_service().get_status()
+
+
+# ── Scan Scheduler ───────────────────────────────────────────────
+
+
+@router.post("/scan-schedule/start")
+async def start_scan_schedule(body: dict = None):
+    from ..services.scan_service import get_scan_service
+    svc = get_scan_service()
+    subnet = (body or {}).get("subnet", "192.168.1.0/24")
+    interval = (body or {}).get("interval", 300)
+    return await svc.start(subnet=subnet, interval=interval)
+
+
+@router.post("/scan-schedule/stop")
+async def stop_scan_schedule():
+    from ..services.scan_service import get_scan_service
+    return await get_scan_service().stop()
+
+
+@router.get("/scan-schedule/status")
+async def get_scan_schedule_status():
+    from ..services.scan_service import get_scan_service
+    return get_scan_service().get_status()
+
+
+# ── Suricata IDS ────────────────────────────────────────────────
+
+@router.post("/suricata/start")
+async def start_suricata(body: dict = {}):
+    from ..services.suricata_service import get_suricata_service
+    svc = get_suricata_service()
+    eve_path = body.get("eve_path", "")
+    if eve_path:
+        from pathlib import Path
+        svc.eve_json_path = Path(eve_path)
+    return await svc.start()
+
+
+@router.post("/suricata/stop")
+async def stop_suricata():
+    from ..services.suricata_service import get_suricata_service
+    return await get_suricata_service().stop()
+
+
+@router.get("/suricata/alerts")
+async def get_suricata_alerts(severity: str = "", limit: int = 100):
+    from ..services.suricata_service import get_suricata_service
+    svc = get_suricata_service()
+    return {
+        "alerts": svc.get_events(limit=limit, severity=severity),
+        "stats": svc.get_stats(),
+    }
+
+
+@router.get("/suricata/stats")
+async def get_suricata_stats():
+    from ..services.suricata_service import get_suricata_service
+    return get_suricata_service().get_stats()

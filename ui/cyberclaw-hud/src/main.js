@@ -1126,6 +1126,22 @@ function handleWSMessage(msg) {
       });
       break;
     }
+    case 'suricata_alert': {
+      const evt = msg.event || {};
+      addAlert({
+        severity: evt.severity || 'high',
+        message: evt.message || 'Suricata alert',
+        type: 'suricata_alert',
+      });
+      if (evt.fsm_state && evt.target) {
+        const entry = state.devices.find(d => d.payload?.ip === evt.target);
+        if (entry) updateDeviceStatus(entry.id, evt.fsm_state);
+      }
+      break;
+    }
+    case 'traffic_stats': {
+      break;
+    }
   }
 
   // Update step counter
@@ -1143,6 +1159,7 @@ function handleWSMessage(msg) {
       }
     });
   }
+
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1228,12 +1245,11 @@ function reopenPanel(side) {
 }
 
 function onResize() {
-  const w = window.innerWidth, h = window.innerHeight;
-  state.camera.aspect = w / h;
+  state.camera.aspect = window.innerWidth / window.innerHeight;
   state.camera.updateProjectionMatrix();
-  state.renderer.setSize(w, h);
-  state.labels.setSize(w, h);
-  state.composer.setSize(w, h);
+  state.renderer.setSize(window.innerWidth, window.innerHeight);
+  state.labels.setSize(window.innerWidth, window.innerHeight);
+  state.composer.setSize(window.innerWidth, window.innerHeight);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1458,6 +1474,8 @@ async function boot() {
 
   // Start render loop
   animate();
+  onResize();
+  window.addEventListener('resize', onResize);
 }
 
 boot();

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CyberClaw 实用化改造方案</title>
+<style>
+  :root {
+    --bg: #0a0e17; --surface: #111827; --border: #1e293b;
+    --accent: #00e5ff; --accent2: #7c3aed; --text: #e2e8f0; --dim: #94a3b8;
+    --crit: #ef4444; --high: #f97316; --med: #eab308; --low: #22c55e;
+    --code-bg: #1a1a2e;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI','Microsoft YaHei',sans-serif; background:var(--bg); color:var(--text); line-height:1.7; }
+  .header { background:linear-gradient(135deg,#0a0e17 0%,#1a1040 50%,#0a0e17 100%); border-bottom:1px solid var(--border); padding:48px 40px; text-align:center; }
+  .header h1 { font-size:2.2em; font-weight:700; background:linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:10px; }
+  .header p { color:var(--dim); font-size:1em; max-width:800px; margin:0 auto; }
+  .nav { background:var(--surface); border-bottom:1px solid var(--border); padding:12px 40px; display:flex; gap:16px; flex-wrap:wrap; position:sticky; top:0; z-index:100; }
+  .nav a { color:var(--dim); text-decoration:none; font-size:.85em; padding:5px 12px; border-radius:5px; transition:all .2s; }
+  .nav a:hover { color:var(--accent); background:rgba(0,229,255,.08); }
+  .container { max-width:960px; margin:0 auto; padding:36px 28px; }
+  .section { margin-bottom:56px; }
+  .sh { display:flex; align-items:center; gap:14px; margin-bottom:20px; padding-bottom:14px; border-bottom:1px solid var(--border); }
+  .sn { width:44px; height:44px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.3em; font-weight:700; flex-shrink:0; }
+  .sh h2 { font-size:1.5em; font-weight:600; }
+  .badge { margin-left:auto; font-size:.75em; padding:3px 10px; border-radius:5px; font-weight:600; }
+  .card { border-radius:10px; padding:18px 22px; margin-bottom:20px; }
+  .card-prob { background:rgba(239,68,68,.06); border:1px solid rgba(239,68,68,.2); }
+  .card-sol { background:rgba(34,197,94,.06); border:1px solid rgba(34,197,94,.2); }
+  .card .lbl { font-weight:600; font-size:.82em; margin-bottom:6px; display:block; }
+  .card-prob .lbl { color:var(--crit); }
+  .card-sol .lbl { color:var(--low); }
+  .arch { background:var(--code-bg); border:1px solid var(--border); border-radius:10px; padding:20px; margin:16px 0; overflow-x:auto; }
+  .arch pre { font-family:'Cascadia Code','Consolas',monospace; font-size:.82em; line-height:1.55; color:var(--text); }
+  .arch .hl-a { color:var(--accent); font-weight:600; }
+  .arch .hl-p { color:var(--accent2); }
+  .arch .hl-o { color:var(--high); }
+  .arch .hl-g { color:var(--low); }
+  .arch .hl-d { color:var(--dim); }
+  .steps { list-style:none; counter-reset:sc; padding-left:16px; }
+  .steps li { counter-increment:sc; position:relative; padding:10px 0 10px 40px; border-left:2px solid var(--border); margin-left:16px; }
+  .steps li::before { content:counter(sc); position:absolute; left:-12px; top:10px; width:22px; height:22px; border-radius:50%; background:var(--accent); color:var(--bg); font-size:.72em; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .steps li:last-child { border-left-color:transparent; }
+  .steps code { background:var(--code-bg); padding:2px 5px; border-radius:3px; font-size:.86em; color:var(--accent); }
+  table.cmp { width:100%; border-collapse:collapse; margin:16px 0; font-size:.88em; }
+  .cmp th { background:var(--surface); padding:10px 14px; text-align:left; border-bottom:2px solid var(--accent); color:var(--accent); font-weight:600; }
+  .cmp td { padding:8px 14px; border-bottom:1px solid var(--border); }
+  .cmp tr:hover td { background:rgba(0,229,255,.03); }
+  .flist { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0; }
+  .fi { background:var(--code-bg); border:1px solid var(--border); border-radius:7px; padding:10px 14px; font-family:'Cascadia Code','Consolas',monospace; font-size:.82em; display:flex; justify-content:space-between; align-items:center; }
+  .tag { font-size:.7em; padding:1px 5px; border-radius:3px; font-family:'Segoe UI',sans-serif; font-weight:600; }
+  .tag-n { background:rgba(34,197,94,.2); color:var(--low); }
+  .tag-m { background:rgba(234,179,8,.2); color:var(--med); }
+  .effort { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:7px; font-size:.82em; margin-top:12px; }
+  .ef-m { background:rgba(234,179,8,.12); color:var(--med); border:1px solid rgba(234,179,8,.25); }
+  .ef-l { background:rgba(34,197,94,.12); color:var(--low); border:1px solid rgba(34,197,94,.25); }
+  .ef-h { background:rgba(239,68,68,.12); color:var(--crit); border:1px solid rgba(239,68,68,.25); }
+  .footer { text-align:center; padding:36px; color:var(--dim); font-size:.82em; border-top:1px solid var(--border); margin-top:36px; }
+  .conclusion { background:var(--surface); border:1px solid var(--accent); border-radius:12px; padding:24px 28px; margin-top:28px; }
+  .conclusion h3 { color:var(--accent); margin-bottom:10px; font-size:1.15em; }
+  .conclusion p { color:var(--dim); font-size:.92em; }
+  h3 { margin:20px 0 10px; font-size:1.05em; }
+  .note { background:rgba(0,229,255,.06); border-left:3px solid var(--accent); padding:12px 16px; border-radius:0 6px 6px 0; margin:14px 0; font-size:.9em; color:var(--dim); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>CyberClaw 实用化改造方案</h1>
+  <p>流量检测 + SOC Dashboard + 统一界面 + OpenClaw 接入<br>目标：改造后可作为 IoT 安全运营工具实际投入使用</p>
+</div>
+
+<div class="nav">
+  <a href="#p1">Phase 1: Suricata 流量检测</a>
+  <a href="#p2">Phase 2: Dashboard API</a>
+  <a href="#p3">Phase 3: 统一界面</a>
+  <a href="#p4">Phase 4: OpenClaw</a>
+  <a href="#files">文件改动汇总</a>
+  <a href="#verify">验证方案</a>
+  <a href="#order">实施顺序</a>
+</div>
+
+<div class="container">
+
+<!-- ═══ PHASE 1 ═══ -->
+<div class="section" id="p1">
+  <div class="sh">
+    <div class="sn" style="background:rgba(0,229,255,.12);color:var(--accent);">1</div>
+    <h2>Suricata 真实流量检测集成</h2>
+    <span class="badge" style="background:var(--crit);color:#fff;">P0</span>
+  </div>
+
+  <div class="card card-prob">
+    <span class="lbl">当前问题</span>
+    CyberClaw 的"检测"完全依赖外部扫描和 syslog 上报，没有 DPI 能力。无法检测正在发生的网络攻击（端口扫描、暴力破解、异常流量）。
+  </div>
+
+  <div class="card card-sol">
+    <span class="lbl">方案：集成 Suricata + scapy fallback</span>
+    嵌入 Suricata 作为 IDS 引擎，后端 tail <code>eve.json</code> 实时解析告警，映射到 5-state FSM。Suricata 不可用时降级到 scapy 流量统计。
+  </div>
+
+  <div class="arch">
+<pre>
+<span class="hl-dim">网络流量</span>
+    │
+    ▼
+┌──────────────┐    ┌──────────────┐    ┌─────────────────┐
+│ 网络镜像 /   │    │   <span class="hl-a">Suricata</span>   │    │   eve.json      │
+│ 本机网卡     │───→│   IDS 模式   │───→│   NDJSON 事件流  │
+│              │    │              │    │                 │
+└──────────────┘    └──────────────┘    └────────┬────────┘
+                                                 │ 后端轮询 (0.5s)
+                                      ┌──────────▼──────────┐
+                                      │ <span class="hl-a">suricata_service.py</span>  │
+                                      │                      │
+                                      │  解析 alert 事件 →   │
+                                      │  FSM 状态映射 →      │
+                                      │  WebSocket 推送 HUD  │
+                                      │  存入内存队列        │
+                                      └──────────────────────┘
+                                                 │
+                                  ┌──────────────┘ Suricata 不可用时
+                                  ▼
+                        ┌──────────────────┐
+                        │ <span class="hl-o">scapy fallback</span>  │
+                        │ 协议流量统计      │
+                        │ 包计数 / 源IP TOP │
+                        └──────────────────┘
+</pre>
+  </div>
+
+  <h3>FSM 状态映射</h3>
+  <table class="cmp">
+    <tr><th>Suricata Severity</th><th>典型场景</th><th>CyberClaw FSM</th></tr>
+    <tr><td>1 (Critical)</td><td>恶意软件检测、Shellcode</td><td style="color:var(--crit);font-weight:600;">attacked</td></tr>
+    <tr><td>2 (High)</td><td>Web 攻击、暴力破解成功</td><td style="color:var(--crit);font-weight:600;">attacked</td></tr>
+    <tr><td>3 (Medium)</td><td>端口扫描、可疑连接</td><td style="color:var(--med);font-weight:600;">vulnerable</td></tr>
+    <tr><td>4 (Low)</td><td>信息性告警</td><td style="color:var(--accent);font-weight:600;">scanning</td></tr>
+  </table>
+
+  <h3>实施步骤</h3>
+  <ol class="steps">
+    <li><strong>创建 <code>server/services/suricata_service.py</code></strong>：SuricataMonitor 类 — tail eve.json + 告警解析 + FSM 映射 + scapy fallback。单例模式 <code>get_suricata_service()</code></li>
+    <li><strong>修改 <code>server/main.py</code></strong>：导入 suricata_service，wire broadcast callback，lifespan 中启动监控</li>
+    <li><strong>修改 <code>server/api/tools.py</code></strong>：新增 <code>/suricata/start</code>、<code>/stop</code>、<code>/alerts</code>、<code>/stats</code> 四个端点</li>
+    <li><strong>新增 WebSocket 消息</strong>：<code>suricata_alert</code>（告警推送）、<code>traffic_stats</code>（流量统计）、<code>device_status_change</code>（FSM 变更）</li>
+  </ol>
+
+  <div class="note">
+    <strong>不新增 Python 依赖。</strong>使用标准库 <code>open()</code> + 轮询替代 <code>aiofiles</code>。Suricata 可选安装，不安装时不 crash，返回空数据。
+  </div>
+
+  <div class="flist">
+    <div class="fi">server/services/suricata_service.py <span class="tag tag-n">NEW ~200行</span></div>
+    <div class="fi">server/main.py <span class="tag tag-m">MOD +10行</span></div>
+    <div class="fi">server/api/tools.py <span class="tag tag-m">MOD +40行</span></div>
+  </div>
+
+  <div class="effort ef-m"><strong>投入：中等</strong> — 核心约 200 行 Python，Suricata 规则集另配</div>
+</div>
+
+<!-- ═══ PHASE 2 ═══ -->
+<div class="section" id="p2">
+  <div class="sh">
+    <div class="sn" style="background:rgba(124,58,237,.15);color:var(--accent2);">2</div>
+    <h2>SOC Dashboard 后端 API</h2>
+    <span class="badge" style="background:var(--crit);color:#fff;">P0</span>
+  </div>
+
+  <div class="card card-prob">
+    <span class="lbl">当前问题</span>
+    <code>server/api/security.py</code> 只有两个 stub 端点（<code>/events</code> 返回空列表）。前端 HUD 没有任何可用的聚合数据 API。
+  </div>
+
+  <div class="card card-sol">
+    <span class="lbl">方案：新建 Dashboard API Router</span>
+    统一聚合 syslog / snmp / mqtt / suricata 四种数据源，提供告警列表、趋势图、日志检索 API。
+  </div>
+
+  <div class="arch">
+<pre>
+┌─────────┐  ┌─────────┐  ┌─────────┐  ┌───────────┐  ┌──────────┐
+│ <span class="hl-a">Syslog</span>  │  │ <span class="hl-g">SNMP</span>    │  │ <span class="hl-o">MQTT</span>    │  │ <span class="hl-p">Suricata</span>  │  │ Topology │
+│ collector│  │ service │  │ monitor │  │ service   │  │ service  │
+└────┬─────┘  └────┬─────┘  └────┬────┘  └─────┬─────┘  └────┬─────┘
+     │              │              │             │              │
+     └──────────────┴──────────────┴─────────────┴──────────────┘
+                                  │
+                        ┌─────────▼──────────┐
+                        │  <span class="hl-a">dashboard.py</span>      │
+                        │  /api/dashboard/*   │
+                        │                     │
+                        │  alerts  ──────────→│ 告警列表 (过滤/排序)
+                        │  trends/* ─────────→│ 趋势图数据 (24h分桶)
+                        │  logs/search ──────→│ 统一日志检索
+                        └─────────────────────┘
+</pre>
+  </div>
+
+  <h3>API 端点一览</h3>
+  <table class="cmp">
+    <tr><th>端点</th><th>方法</th><th>说明</th></tr>
+    <tr><td><code>/api/dashboard/alerts</code></td><td>GET</td><td>统一告警列表（severity/limit/offset 过滤）</td></tr>
+    <tr><td><code>/api/dashboard/trends/alert-count</code></td><td>GET</td><td>24h 告警数量趋势（按小时分桶）</td></tr>
+    <tr><td><code>/api/dashboard/trends/device-status</code></td><td>GET</td><td>设备 FSM 状态分布饼图</td></tr>
+    <tr><td><code>/api/dashboard/trends/protocol-traffic</code></td><td>GET</td><td>协议流量分布</td></tr>
+    <tr><td><code>/api/dashboard/trends/category-breakdown</code></td><td>GET</td><td>告警类别 TOP10</td></tr>
+    <tr><td><code>/api/dashboard/logs/search</code></td><td>GET</td><td>统一日志检索（全文搜索 + 多维过滤）</td></tr>
+  </table>
+
+  <div class="flist">
+    <div class="fi">server/api/dashboard.py <span class="tag tag-n">NEW ~250行</span></div>
+    <div class="fi">server/main.py <span class="tag tag-m">MOD +2行</span></div>
+  </div>
+
+  <div class="effort ef-l"><strong>投入：低-中等</strong> — 主要是数据聚合逻辑，约 250 行</div>
+</div>
+
+<!-- ═══ PHASE 3 ═══ -->
+<div class="section" id="p3">
+  <div class="sh">
+    <div class="sn" style="background:rgba(234,179,8,.12);color:var(--med);">3</div>
+    <h2>统一界面：HUD + Chat + Dashboard 同屏</h2>
+    <span class="badge" style="background:var(--crit);color:#fff;">P0</span>
+  </div>
+
+  <div class="card card-prob">
+    <span class="lbl">当前问题</span>
+    前端分两个独立页面（<code>index.html</code> 3D HUD 和 <code>chat/index.html</code> AI 对话），不能同时使用。打开 HUD 就看不到 Chat，反之亦然。3D HUD 全屏展示不实用。
+  </div>
+
+  <div class="card card-sol">
+    <span class="lbl">方案：改造 index.html 为左右分栏统一界面</span>
+    左侧 60% 保留 3D HUD（缩小），右侧 40% 放 Chat + Dashboard（Tab 切换）。共享 WebSocket 连接，同时更新。
+  </div>
+
+  <div class="arch">
+<pre>
+┌──────────────────────────────────────────────────────────────┐
+│  <span class="hl-dim">CyberClaw 统一安全控制台</span>                                     │
+│                                                              │
+│  <span class="hl-a">Left 60%: 3D HUD</span>                  <span class="hl-p">Right 40%: 面板区</span>           │
+│  ┌────────────────────────────┐   ┌─── Tab Bar ────────────┐ │
+│  │                            │   │ <span class="hl-g">AI Assistant</span> │ Dashboard │ │
+│  │   3D Topology Scene        │   ├────────────────────────┤ │
+│  │   · 设备状态实时着色        │   │                        │ │
+│  │   · 点击查看详情           │   │  <span class="hl-g">Tab 1: AI Chat</span>       │ │
+│  │   · 攻击光束动画           │   │  自然语言安全对话       │ │
+│  │                            │   │  快速操作按钮           │ │
+│  │                            │   │                        │ │
+│  └────────────────────────────┘   ├────────────────────────┤ │
+│  [Topbar] [Left Sidebar]          │                        │ │
+│  [Alert Timeline] [Footer]        │  <span class="hl-a">Tab 2: SOC Dashboard</span> │ │
+│                                    │  ┌──────────────────┐ │ │
+│                                    │  │ 告警列表 (过滤)  │ │ │
+│                                    │  ├──────────────────┤ │ │
+│                                    │  │ ECharts 趋势图   │ │ │
+│                                    │  ├──────────────────┤ │ │
+│                                    │  │ 日志检索         │ │ │
+│                                    │  └──────────────────┘ │ │
+│                                    └────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+
+  <h3>实施步骤</h3>
+  <ol class="steps">
+    <li><strong>安装 ECharts</strong>：<code>cd ui/cyberclaw-hud && npm install echarts</code></li>
+    <li><strong>创建 <code>src/dashboard.js</code></strong>：ES Module，三个面板组件 — AlertListPanel / TrendCharts / LogSearchPanel，调用 Phase 2 的 API</li>
+    <li><strong>创建 <code>src/dashboard.css</code></strong>：SOC 面板样式，复用现有 CSS 变量</li>
+    <li><strong>改造 <code>index.html</code></strong>：在现有 <code>#app</code> 内新增右侧面板容器 + Tab 切换栏 + Chat 内嵌区</li>
+    <li><strong>改造 <code>src/main.js</code></strong>：重构 WebSocket 为共享连接，HUD/Chat/Dashboard 共用。新增 Tab 切换逻辑 + Dashboard 初始化入口。新增 <code>suricata_alert</code> / <code>traffic_stats</code> 消息处理</li>
+    <li><strong>扩展 <code>src/styles.css</code></strong>：新增分栏布局 <code>.split-layout</code>、Tab 栏 <code>.panel-tabs</code>、右侧面板 <code>.right-panel</code> 样式</li>
+  </ol>
+
+  <h3>共享 WebSocket 架构</h3>
+  <div class="arch">
+<pre>
+<span class="hl-dim">WebSocket 连接 (单例)</span>
+         │
+         ├──→ <span class="hl-a">HUD Handler</span>        设备状态更新 / 3D 动画 / 光束效果
+         │
+         ├──→ <span class="hl-g">Dashboard Handler</span>  告警列表刷新 / ECharts 更新 / 日志追加
+         │
+         └──→ <span class="hl-p">Chat Handler</span>       AI 分析结果 / 操作确认
+
+消息分发规则：
+  init / heartbeat / scan_result / device_isolated    → HUD
+  suricata_alert / syslog_event / snmp_trap / mqtt    → Dashboard + HUD
+  tool_started / tool_complete                         → HUD + Chat
+</pre>
+  </div>
+
+  <div class="note">
+    <strong>不创建新的 HTML 页面。</strong>直接改造现有 <code>index.html</code>，<code>chat/index.html</code> 保留作为独立入口。用户打开 <code>http://localhost:3000</code> 即看到统一界面。
+  </div>
+
+  <div class="flist">
+    <div class="fi">ui/cyberclaw-hud/src/dashboard.js <span class="tag tag-n">NEW ~400行</span></div>
+    <div class="fi">ui/cyberclaw-hud/src/dashboard.css <span class="tag tag-n">NEW ~250行</span></div>
+    <div class="fi">ui/cyberclaw-hud/index.html <span class="tag tag-m">MOD +80行</span></div>
+    <div class="fi">ui/cyberclaw-hud/src/main.js <span class="tag tag-m">MOD +60行</span></div>
+    <div class="fi">ui/cyberclaw-hud/src/styles.css <span class="tag tag-m">MOD +120行</span></div>
+  </div>
+
+  <div class="effort ef-h"><strong>投入：较大</strong> — 核心是 dashboard.js（~400 行）+ main.js 重构。但这是价值最高的部分。</div>
+</div>
+
+<!-- ═══ PHASE 4 ═══ -->
+<div class="section" id="p4">
+  <div class="sh">
+    <div class="sn" style="background:rgba(34,197,94,.12);color:var(--low);">4</div>
+    <h2>OpenClaw 接入评估</h2>
+    <span class="badge" style="background:var(--med);color:#000;">评估</span>
+  </div>
+
+  <div class="card card-sol">
+    <span class="lbl">评估结论</span>
+    <strong>OpenClaw 是基础设施，不是约束。</strong> CyberClaw 已在使用 <code>openclaw.json</code> 注册 MCP 服务器，这已是最核心的接入点。新功能在 CyberClaw 原生代码中实现，不强行适配 OpenClaw 模式。
+  </div>
+
+  <h3>OpenClaw 能力 vs CyberClaw 状态</h3>
+  <table class="cmp">
+    <tr><th>OpenClaw 能力</th><th>CyberClaw 状态</th><th>结论</th></tr>
+    <tr><td>MCP Server 注册 (openclaw.json)</td><td>已在使用</td><td style="color:var(--low);">继续使用</td></tr>
+    <tr><td>Agent 工作区管理</td><td>未使用</td><td style="color:var(--dim);">不需要 — 有自己的 FastAPI</td></tr>
+    <tr><td>Token 优化 (TOON 序列化)</td><td>配置了但未使用</td><td style="color:var(--med);">可选 — 当前 GLM-4 成本低</td></tr>
+    <tr><td>安全模式 (hobby/production)</td><td>hobby 模式</td><td style="color:var(--med);">可选 — 当前无敏感数据</td></tr>
+    <tr><td>Skills 框架</td><td>未使用</td><td style="color:var(--dim);">不需要 — 有 tool_broadcast</td></tr>
+    <tr><td>GAIT 日志</td><td>未使用</td><td style="color:var(--med);">有价值，非 P0</td></tr>
+  </table>
+
+  <div class="conclusion">
+    <h3>接入策略</h3>
+    <p>1. <strong>继续使用 <code>openclaw.json</code></strong> 注册所有 MCP 服务器（包括可能的 suricata-analyzer）</p>
+    <p>2. <strong>不创建新 MCP 服务器</strong> — Suricata 监控是持续运行的服务，不是按需调用的工具。MCP stdio 不支持持续数据流</p>
+    <p>3. <strong>不引入 OpenClaw Agent 框架</strong> — CyberClaw 有自己的 FastAPI backend + WebSocket 架构，更灵活</p>
+    <p>4. <strong>未来可选</strong>：当需要接入 Claude Agent 时，可以通过 OpenClaw 的 agent 模式扩展</p>
+  </div>
+
+  <div class="flist">
+    <div class="fi">config/openclaw.json <span class="tag tag-m">MOD +10行 (可选)</span></div>
+  </div>
+
+  <div class="effort ef-l"><strong>投入：极低</strong> — 仅配置文件更新，无代码改动</div>
+</div>
+
+<!-- ═══ FILES ═══ -->
+<div class="section" id="files">
+  <div class="sh">
+    <div class="sn" style="background:rgba(0,229,255,.12);color:var(--accent);">&sum;</div>
+    <h2>文件改动汇总</h2>
+  </div>
+
+  <h3>新建文件（~1100 行）</h3>
+  <table class="cmp">
+    <tr><th>文件路径</th><th>行数</th><th>说明</th></tr>
+    <tr><td><code>server/services/suricata_service.py</code></td><td>~200</td><td>Suricata 监控 + scapy fallback</td></tr>
+    <tr><td><code>server/api/dashboard.py</code></td><td>~250</td><td>Dashboard API（告警/趋势/日志）</td></tr>
+    <tr><td><code>ui/cyberclaw-hud/src/dashboard.js</code></td><td>~400</td><td>ECharts 面板组件</td></tr>
+    <tr><td><code>ui/cyberclaw-hud/src/dashboard.css</code></td><td>~250</td><td>SOC 面板样式</td></tr>
+  </table>
+
+  <h3>修改文件（~312 行改动）</h3>
+  <table class="cmp">
+    <tr><th>文件路径</th><th>改动</th><th>说明</th></tr>
+    <tr><td><code>server/main.py</code></td><td>+12</td><td>注册 suricata/dashboard 服务</td></tr>
+    <tr><td><code>server/api/tools.py</code></td><td>+40</td><td>Suricata 控制端点</td></tr>
+    <tr><td><code>ui/cyberclaw-hud/index.html</code></td><td>+80</td><td>右侧面板容器 + Tab 栏</td></tr>
+    <tr><td><code>ui/cyberclaw-hud/src/main.js</code></td><td>+60</td><td>共享 WS + Tab + Dashboard 初始化</td></tr>
+    <tr><td><code>ui/cyberclaw-hud/src/styles.css</code></td><td>+120</td><td>分栏 + Tab + Dashboard 样式</td></tr>
+    <tr><td><code>config/openclaw.json</code></td><td>+10</td><td>可选：注册新 MCP</td></tr>
+  </table>
+
+  <h3>新增依赖</h3>
+  <table class="cmp">
+    <tr><th>依赖</th><th>位置</th><th>大小</th><th>说明</th></tr>
+    <tr><td><code>echarts ^5.5.0</code></td><td>前端 (npm)</td><td>~1.5MB</td><td>图表库，无额外依赖</td></tr>
+    <tr><td>—</td><td>后端 (pip)</td><td>—</td><td>无新增 Python 依赖</td></tr>
+  </table>
+</div>
+
+<!-- ═══ VERIFY ═══ -->
+<div class="section" id="verify">
+  <div class="sh">
+    <div class="sn" style="background:rgba(34,197,94,.12);color:var(--low);">&#10003;</div>
+    <h2>验证方案</h2>
+  </div>
+
+  <h3>无 Suricata 时（当前环境）</h3>
+  <ol class="steps">
+    <li>启动后端 <code>python -m uvicorn server.main:app --reload --port 8000</code></li>
+    <li>启动前端 <code>cd ui/cyberclaw-hud && npm run dev</code></li>
+    <li>打开 <code>http://localhost:3000</code> → 验证统一界面正常（左 HUD + 右 Chat/Dashboard）</li>
+    <li>点击 Dashboard Tab → 验证告警列表显示"暂无告警"（不是 crash）</li>
+    <li><code>curl /api/dashboard/alerts</code> → 返回空列表 <code>{"alerts":[],"total":0}</code></li>
+    <li><code>curl /api/dashboard/trends/device-status</code> → 返回设备 FSM 状态分布</li>
+    <li>触发 Mirai 演示 → 验证 HUD 动画 + Dashboard 告警同步更新</li>
+  </ol>
+
+  <h3>有 Suricata 时（WSL2）</h3>
+  <ol class="steps">
+    <li>WSL2: <code>sudo apt install suricata && sudo suricata-update</code></li>
+    <li>启动: <code>sudo suricata -c /etc/suricata/suricata.yaml -i eth0</code></li>
+    <li>触发扫描: <code>nmap -sS &lt;target&gt;</code></li>
+    <li>验证: HUD 设备状态变为 attacked/vulnerable</li>
+    <li>验证: Dashboard 告警列表实时更新 + ECharts 图表显示趋势</li>
+    <li>验证: Chat 可正常对话，不受 Suricata 影响</li>
+  </ol>
+</div>
+
+<!-- ═══ ORDER ═══ -->
+<div class="section" id="order">
+  <div class="sh">
+    <div class="sn" style="background:rgba(124,58,237,.15);color:var(--accent2);">&#9654;</div>
+    <h2>实施顺序与依赖关系</h2>
+  </div>
+
+  <div class="arch">
+<pre>
+<span class="hl-dim">Phase 1: Suricata 集成</span>              <span class="hl-dim">Phase 2: Dashboard API</span>
+<span class="hl-a">suricata_service.py (~200行)</span>          <span class="hl-p">dashboard.py (~250行)</span>
+<span class="hl-a">tools.py (+40行)</span>                      <span class="hl-p">main.py (+2行)</span>
+<span class="hl-a">main.py (+10行)</span>
+         │                                       │
+         └─────────── 提供数据源 ────────────────┘
+                            │
+                            ▼
+                 <span class="hl-dim">Phase 3: 统一界面</span>
+                 <span class="hl-o">dashboard.js (~400行)</span>
+                 <span class="hl-o">dashboard.css (~250行)</span>
+                 <span class="hl-o">index.html (+80行)</span>
+                 <span class="hl-o">main.js (+60行)</span>
+                 <span class="hl-o">styles.css (+120行)</span>
+                            │
+                            ▼
+                 <span class="hl-dim">Phase 4: OpenClaw 配置</span>
+                 <span class="hl-g">openclaw.json (+10行, 可选)</span>
+</pre>
+  </div>
+
+  <div class="note">
+    <strong>Phase 1 和 Phase 2 可并行开发。</strong>Phase 3 依赖 Phase 2 的 API。Phase 4 独立，随时可做。
+  </div>
+</div>
+
+</div>
+
+<div class="footer">
+  CyberClaw Practical Upgrade Plan &mdash; Sense &rarr; Detect &rarr; Shield &rarr; Review<br>
+  <span style="color:var(--dim)">基于现有开源项目（Suricata / ECharts）· 遵循 CLAUDE.md 编码规范 · 无 mock 数据</span>
+</div>
+
+</body>
+</html>

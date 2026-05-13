@@ -1,0 +1,35 @@
+[
+  {
+    "enabled": true
+  },
+  {
+    "enabled": true
+  },
+  {
+    "name": "漏洞设备标记",
+    "enabled": "Yes",
+    "trigger": {
+      "object_type": "Devices",
+      "event_type": "update"
+    },
+    "conditions": [
+      {
+        "logic": "AND",
+        "conditions": [
+          {
+            "field": "devStatus",
+            "operator": "equals",
+            "value": "vulnerable"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "type": "update_field",
+        "field": "devAlertDown",
+        "value": "1"
+      }
+    ]
+  }
+]

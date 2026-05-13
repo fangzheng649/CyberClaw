@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -23,6 +24,12 @@ from .services.tool_broadcast_service import set_broadcast as set_tool_broadcast
 from .services.collector_service import get_receiver
 from .services.snmp_service import get_snmp_service
 from .services.mqtt_service import get_mqtt_service
+from .services.suricata_service import get_suricata_service
+from .services.scan_service import get_scan_service
+from .api.dashboard import router as dashboard_router
+from .api.workflow_router import router as workflow_router
+from .api.notification_router import router as notification_router
+from .services.nx_bridge import get_bridge
 from .websocket.events import ConnectionManager
 
 logging.basicConfig(level=logging.INFO)
@@ -73,13 +80,46 @@ get_receiver().set_broadcast(broadcast_event)
 get_snmp_service().set_broadcast(broadcast_event)
 get_mqtt_service().set_broadcast(broadcast_event)
 
+# Wire Suricata service broadcast
+get_suricata_service().set_broadcast(broadcast_event)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("CyberClaw FastAPI backend starting...")
+    # 初始化持久化数据库
+    try:
+        bridge = get_bridge()
+        await bridge.initialize()
+        logger.info("Database initialized successfully")
+        # Seed topology.json 到数据库（仅空库时执行）
+        try:
+            from .services.db.seed_service import seed_from_config
+            await seed_from_config()
+        except Exception as e:
+            logger.debug(f"Seed skipped: {e}")
+    except Exception as e:
+        logger.warning(f"Database init failed (continuing without DB): {e}")
+    # 可选：自动启动定期网络扫描
+    scan_subnet = os.getenv("SCAN_SUBNET", "")
+    if scan_subnet:
+        scan_interval = int(os.getenv("SCAN_INTERVAL", "300"))
+        scan_svc = get_scan_service()
+        await scan_svc.start(subnet=scan_subnet, interval=scan_interval)
+        logger.info(f"Auto scan started: subnet={scan_subnet}, interval={scan_interval}s")
     hb_task = asyncio.create_task(heartbeat_loop())
     yield
     hb_task.cancel()
+    # 停止自动扫描
+    try:
+        await get_scan_service().stop()
+    except Exception:
+        pass
+    # 关闭数据库
+    try:
+        await get_bridge().shutdown()
+    except Exception:
+        pass
     logger.info("CyberClaw FastAPI backend shutting down...")
 
 
@@ -99,6 +139,9 @@ app.include_router(scenario_router)
 app.include_router(chat_router)
 app.include_router(tools_router)
 app.include_router(discovery_router)
+app.include_router(dashboard_router)
+app.include_router(workflow_router)
+app.include_router(notification_router)
 
 
 @app.websocket("/ws")
