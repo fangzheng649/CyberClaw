@@ -71,3 +71,4 @@ class ChatResponse(BaseModel):
     reply: str
     message_type: str = "reply"
     steps: list[AnalysisStep] = []
+    tool_results: list[dict] = []

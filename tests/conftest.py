@@ -50,18 +50,18 @@ def setup_test_data(db_conn):
     db_conn.execute("DELETE FROM security_events")
     db_conn.execute("DELETE FROM Events")
 
-    # 确保有测试设备
+    # 确保有测试设备（网段与 topology.json 一致）
     db_conn.execute("""
-        INSERT OR IGNORE INTO Devices (devMac, devName, devType, devLastIP, devStatus, devPresentLastScan, devIsArchived, devIsNew, devAlertDown)
-        VALUES ('aa:bb:cc:dd:ee:01', 'Test-Camera-1', 'camera', '10.0.0.101', 'secure', 1, '0', '0', 1)
+        INSERT OR IGNORE INTO Devices (devMac, devName, devType, devVendor, devModel, devLastIP, devStatus, devPresentLastScan, devIsArchived, devIsNew, devAlertDown)
+        VALUES ('aa:bb:cc:dd:ee:01', 'Test-Camera-1', 'camera', 'Hikvision', 'DS-2CD2142', '192.168.10.101', 'secure', 1, '0', '0', 1)
     """)
     db_conn.execute("""
-        INSERT OR IGNORE INTO Devices (devMac, devName, devType, devLastIP, devStatus, devPresentLastScan, devIsArchived, devIsNew, devAlertDown, devParentMAC)
-        VALUES ('aa:bb:cc:dd:ee:02', 'Test-Sensor-1', 'sensor', '10.0.0.102', 'secure', 1, '0', '0', 1, 'aa:bb:cc:dd:ee:01')
+        INSERT OR IGNORE INTO Devices (devMac, devName, devType, devVendor, devModel, devLastIP, devStatus, devPresentLastScan, devIsArchived, devIsNew, devAlertDown, devParentMAC)
+        VALUES ('aa:bb:cc:dd:ee:02', 'Test-Sensor-1', 'sensor', 'Siemens', 'SITRANS TH400', '192.168.10.102', 'secure', 1, '0', '0', 1, 'aa:bb:cc:dd:ee:01')
     """)
     db_conn.execute("""
-        INSERT OR IGNORE INTO Devices (devMac, devName, devType, devLastIP, devStatus, devPresentLastScan, devIsArchived, devIsNew, devAlertDown)
-        VALUES ('aa:bb:cc:dd:ee:03', 'Test-Gateway', 'gateway', '10.0.0.1', 'secure', 1, '0', '0', 1)
+        INSERT OR IGNORE INTO Devices (devMac, devName, devType, devVendor, devModel, devLastIP, devStatus, devPresentLastScan, devIsArchived, devIsNew, devAlertDown)
+        VALUES ('aa:bb:cc:dd:ee:03', 'Test-Gateway', 'gateway', 'Advantech', 'UNO-2484G', '192.168.10.3', 'secure', 1, '0', '0', 1)
     """)
     db_conn.commit()
     yield

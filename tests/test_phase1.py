@@ -8,11 +8,11 @@ async def test_security_events_returns_real_data(client, db_conn):
     # 插入测试事件
     db_conn.execute(
         "INSERT INTO security_events (source_type, severity, message, source, target) VALUES (?, ?, ?, ?, ?)",
-        ("syslog", "critical", "Test critical alert", "10.0.0.101", "10.0.0.1")
+        ("syslog", "critical", "Test critical alert", "192.168.10.101", "192.168.10.1")
     )
     db_conn.execute(
         "INSERT INTO security_events (source_type, severity, message, source) VALUES (?, ?, ?, ?)",
-        ("snmp", "info", "Test info event", "10.0.0.102")
+        ("snmp", "info", "Test info event", "192.168.10.102")
     )
     db_conn.commit()
 

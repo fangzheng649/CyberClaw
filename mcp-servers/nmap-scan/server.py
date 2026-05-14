@@ -397,9 +397,39 @@ def _check_credentials(scan: ScanResult) -> list[dict]:
 # Scan Execution (dispatches to real or mock)
 # ═══════════════════════════════════════════════════════════════════
 
+async def _is_subnet_reachable(target: str) -> bool:
+    """Quick check: ping a few IPs in the subnet. If none respond, fall back to mock."""
+    try:
+        net = ipaddress.ip_network(target, strict=False)
+        if net.prefixlen == 32:
+            return True  # Single host, skip check
+        # Ping gateway + 2 other IPs in quick succession
+        test_ips = [str(net.network_address + 1), str(net.network_address + 10), str(net.network_address + 50)]
+        for ip in test_ips:
+            probe = await asyncio.create_subprocess_exec(
+                "ping", "-n", "1", "-w", "500", ip,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(probe.wait(), timeout=2)
+            if probe.returncode == 0:
+                # At least one host responds — but check if it's a real IoT network
+                # by seeing if more than just the gateway is alive
+                if ip != test_ips[0]:
+                    return True  # Non-gateway host alive = real network
+        # Only gateway responded or nothing responded — use mock
+        logger.warning(f"Subnet {target} has no live IoT devices, falling back to mock mode")
+        return False
+    except Exception:
+        return True  # On error, let real scan try
+
+
 async def _exec_scan(target: str, ports: str | None, scan_type: str, timing: str, timeout: int) -> ScanResult:
     _validate_target(target)
     if _has_nmap():
+        reachable = await _is_subnet_reachable(target)
+        if not reachable:
+            logger.warning(f"Subnet {target} unreachable, falling back to mock mode")
+            return _mock_scan(target, ports)
         args = ["-oX", "-", SCAN_TYPES.get(scan_type, "-sT"), TIMING.get(timing, "-T3")]
         if ports:
             _validate_ports(ports)
@@ -416,6 +446,11 @@ async def _exec_scan(target: str, ports: str | None, scan_type: str, timing: str
 async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
     _validate_target(target)
     if _has_nmap():
+        reachable = await _is_subnet_reachable(target)
+        if not reachable:
+            devices = _load_mock_devices()
+            hosts = [HostResult(ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor")) for d in devices]
+            return ScanResult(command=f"[mock] nmap -sn {target}", hosts=hosts, scan_stats={"hosts_up": str(len(devices)), "mode": "mock"})
         args = ["-oX", "-", "-sn", TIMING.get(timing, "-T3"), target]
         stdout, stderr, rc = await _run_nmap(args, timeout)
         return _parse_xml(stdout)
@@ -427,6 +462,9 @@ async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
 async def _exec_service_detect(target: str, ports: str | None, intensity: int, timeout: int) -> ScanResult:
     _validate_target(target)
     if _has_nmap():
+        reachable = await _is_subnet_reachable(target)
+        if not reachable:
+            return _mock_scan(target, ports)
         args = ["-oX", "-", "-sV", f"--version-intensity={intensity}", "-T4"]
         if ports:
             _validate_ports(ports)
@@ -443,6 +481,9 @@ async def _exec_service_detect(target: str, ports: str | None, intensity: int, t
 async def _exec_vuln_scan(target: str, scripts: str, timeout: int) -> list[VulnFinding]:
     _validate_target(target)
     if _has_nmap():
+        reachable = await _is_subnet_reachable(target)
+        if not reachable:
+            return _mock_vulns()
         args = ["-oX", "-", "-sV", f"--script={scripts}", "-T4", target]
         stdout, stderr, rc = await _run_nmap(args, timeout)
         return _parse_vuln_xml(stdout)

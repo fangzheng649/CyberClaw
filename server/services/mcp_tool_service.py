@@ -99,16 +99,28 @@ async def call_tool(server: str, tool: str, **kwargs) -> dict:
 
 # ── Intent-based tool orchestration ───────────────────────────────
 
+def _load_subnet() -> str:
+    """Load the target subnet from topology config."""
+    topo_path = PROJECT_ROOT / "config" / "topology.json"
+    try:
+        with open(topo_path, encoding="utf-8") as f:
+            topo = json.load(f)
+            return topo.get("network", {}).get("subnet", "192.168.10.0/24")
+    except Exception:
+        return "192.168.10.0/24"
+
+
+_SUBNET = _load_subnet()
+
 INTENT_TOOL_MAP = {
     r"扫描|scan|检查|发现|网络设备": [
-        {"server": "nmap-scan", "tool": "network_scan", "args": {"target": "10.0.0.0/24"}},
-        {"server": "nmap-scan", "tool": "iot_fingerprint", "args": {"target": "10.0.0.0/24"}},
+        {"server": "nmap-scan", "tool": "network_scan", "args": {"target": _SUBNET}},
+        {"server": "nmap-scan", "tool": "iot_fingerprint", "args": {"target": _SUBNET}},
     ],
     r"发现主机|discover": [
-        {"server": "nmap-scan", "tool": "host_discovery", "args": {"target": "10.0.0.0/24"}},
+        {"server": "nmap-scan", "tool": "host_discovery", "args": {"target": _SUBNET}},
     ],
     r"漏洞|vuln|CVE|cve": [
-        {"server": "nmap-scan", "tool": "vuln_scan", "args": {"target": "10.0.0.0/24"}},
         {"server": "cve-intel", "tool": "check_device_vulns", "args": {"vendor": "Hikvision", "min_severity": "HIGH"}},
     ],
     r"基线|baseline|合规": [
@@ -129,37 +141,36 @@ INTENT_TOOL_MAP = {
         {"server": "traffic-analyzer", "tool": "extract_ioc", "args": {}},
         {"server": "traffic-analyzer", "tool": "analyze_flow", "args": {}},
     ],
-    "traffic": [
-        {"server": "traffic-analyzer", "tool": "extract_ioc", "args": {}},
-        {"server": "traffic-analyzer", "tool": "analyze_flow", "args": {}},
-    ],
 }
 
 
 def match_intent(message: str) -> list[dict]:
-    """Match user message to tool call intents."""
+    """Match user message to tool call intents. Max 3 intent groups to avoid overload."""
     import re
     intents = []
+    matched = 0
     for pattern, tools in INTENT_TOOL_MAP.items():
+        if matched >= 3:
+            break
         if re.search(pattern, message, re.IGNORECASE):
             intents.extend(tools)
+            matched += 1
     return intents
 
 
 async def execute_intent(message: str) -> list[dict]:
-    """Execute tool calls matching the user's message intent."""
+    """Execute tool calls matching the user's message intent, in parallel."""
+    import asyncio
     tool_calls = match_intent(message)
-    results = []
-    for tc in tool_calls:
-        # Allow keyword overrides from the message
+    if not tool_calls:
+        return []
+
+    async def _run_one(tc):
         args = dict(tc["args"])
         result = await call_tool(tc["server"], tc["tool"], **args)
-        results.append({
-            "server": tc["server"],
-            "tool": tc["tool"],
-            "result": result,
-        })
-    return results
+        return {"server": tc["server"], "tool": tc["tool"], "result": result}
+
+    return await asyncio.gather(*[_run_one(tc) for tc in tool_calls])
 
 
 def format_tool_results_for_llm(results: list[dict]) -> str:
@@ -168,18 +179,22 @@ def format_tool_results_for_llm(results: list[dict]) -> str:
         return ""
     parts = ["[工具调用结果]"]
     for r in results:
-        parts.append(f"\n## {r['server']}/{r['tool']}")
         result = r["result"]
+        is_error = isinstance(result, dict) and "error" in result
+        status_tag = "❌ 失败" if is_error else "✅ 成功"
+        parts.append(f"\n## {r['server']}/{r['tool']} — {status_tag}")
         if isinstance(result, dict):
-            # Truncate large results
-            summary = {}
-            for k, v in result.items():
-                if isinstance(v, list) and len(v) > 10:
-                    summary[k] = v[:10]
-                    summary[f"{k}_total"] = len(v)
-                else:
-                    summary[k] = v
-            parts.append(json.dumps(summary, ensure_ascii=False, indent=2)[:2000])
+            if is_error:
+                parts.append(f"错误信息: {result['error']}")
+            else:
+                summary = {}
+                for k, v in result.items():
+                    if isinstance(v, list) and len(v) > 10:
+                        summary[k] = v[:10]
+                        summary[f"{k}_total"] = len(v)
+                    else:
+                        summary[k] = v
+                parts.append(json.dumps(summary, ensure_ascii=False, indent=2)[:2000])
         else:
             parts.append(str(result)[:2000])
     return "\n".join(parts)

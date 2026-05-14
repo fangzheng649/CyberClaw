@@ -164,7 +164,7 @@ async def test_tools_isolate_not_found(client):
 @pytest.mark.slow
 async def test_tools_isolate_valid_device(client):
     """POST /api/tools/isolate 有效设备应返回 200（MCP fallback 到 record_only）"""
-    resp = await client.post("/api/tools/isolate", json={"device_id": "switch-core", "device_ip": "10.0.0.0"})
+    resp = await client.post("/api/tools/isolate", json={"device_id": "switch-core", "device_ip": "192.168.10.1"})
     assert resp.status_code == 200
     data = resp.json()
     assert data.get("task_id") or data.get("status") == "started" or data.get("container")
@@ -174,7 +174,7 @@ async def test_tools_isolate_valid_device(client):
 @pytest.mark.slow
 async def test_tools_restore_valid_device(client):
     """POST /api/tools/restore 有效设备应返回 200"""
-    resp = await client.post("/api/tools/restore", json={"device_id": "switch-core", "device_ip": "10.0.0.0"})
+    resp = await client.post("/api/tools/restore", json={"device_id": "switch-core", "device_ip": "192.168.10.1"})
     assert resp.status_code == 200
     data = resp.json()
     assert data.get("task_id") or data.get("status") == "started"

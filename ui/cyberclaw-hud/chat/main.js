@@ -278,11 +278,25 @@ async function processAIResponse(text) {
       stepsContainer.appendChild(expandEl);
     }
 
+    // Render structured tool result cards
+    if (data.tool_results && data.tool_results.length > 0) {
+      const resultsWrap = document.createElement('div');
+      resultsWrap.className = 'tool-results-wrap';
+      for (const tr of data.tool_results) {
+        const card = renderToolResultCard(tr);
+        if (card) resultsWrap.appendChild(card);
+      }
+      if (resultsWrap.children.length > 0) {
+        msgEl.querySelector('.msg-bubble').insertBefore(resultsWrap, textContainer);
+      }
+    }
+
     // Mark sender as done
     msgEl.querySelector('.msg-sender').innerHTML = '<span class="dot"></span>CyberAgent';
 
-    // Show reply
-    textContainer.innerHTML = data.reply.replace(/\n/g, '<br>');
+    // Show reply (with markdown rendering)
+    const renderMd = (typeof marked !== 'undefined' && marked.parse) ? marked.parse : (s) => s.replace(/\n/g, '<br>');
+    textContainer.innerHTML = renderMd(data.reply);
     textContainer.style.display = 'block';
 
     // Attach confirm button handlers if present in HTML
@@ -618,7 +632,7 @@ let renderReportsControls = function() {
 
   if (state.rpTab === 'devices') {
     wrap.innerHTML = `
-      <input type="text" class="ops-input rp-search" id="rp-device-search" placeholder="搜索设备..." value="${escapeHtml(state.deviceSearch)}" />
+      <input type="text" class="ops-input rp-search" id="rp-device-search" placeholder="搜索设备名称/IP/MAC..." value="${escapeHtml(state.deviceSearch)}" />
       <select class="ops-input rp-select" id="rp-device-status">
         <option value="">全部状态</option>
         <option value="secure">Secure</option>
@@ -627,9 +641,23 @@ let renderReportsControls = function() {
         <option value="attacked">Attacked</option>
         <option value="isolated">Isolated</option>
       </select>
+      <select class="ops-input rp-select" id="rp-device-type">
+        <option value="">全部类型</option>
+        ${[...new Set(state.devices.map(d => d.devType).filter(Boolean))].sort().map(t =>
+          `<option value="${t}" ${state.deviceTypeFilter === t ? 'selected' : ''}>${t}</option>`
+        ).join('')}
+      </select>
+      <select class="ops-input rp-select" id="rp-device-vendor">
+        <option value="">全部厂商</option>
+        ${[...new Set(state.devices.map(d => d.devVendor).filter(Boolean))].sort().map(v =>
+          `<option value="${v}" ${state.deviceVendorFilter === v ? 'selected' : ''}>${v}</option>`
+        ).join('')}
+      </select>
     `;
     const searchInput = $('#rp-device-search');
     const statusSelect = $('#rp-device-status');
+    const typeSelect = $('#rp-device-type');
+    const vendorSelect = $('#rp-device-vendor');
     if (searchInput) searchInput.addEventListener('input', debounce((e) => {
       state.deviceSearch = e.target.value;
       state.devicePage = 0;
@@ -643,6 +671,16 @@ let renderReportsControls = function() {
         renderDeviceTable();
       });
     }
+    if (typeSelect) typeSelect.addEventListener('change', (e) => {
+      state.deviceTypeFilter = e.target.value;
+      state.devicePage = 0;
+      renderDeviceTable();
+    });
+    if (vendorSelect) vendorSelect.addEventListener('change', (e) => {
+      state.deviceVendorFilter = e.target.value;
+      state.devicePage = 0;
+      renderDeviceTable();
+    });
   } else {
     wrap.innerHTML = `
       <select class="ops-input rp-select" id="rp-events-sev">
@@ -699,6 +737,16 @@ let renderDeviceTable = function() {
     devs = devs.filter(d => (d.devStatus || d.devForceStatus || 'secure') === state.deviceStatusFilter);
   }
 
+  // Filter by type
+  if (state.deviceTypeFilter) {
+    devs = devs.filter(d => d.devType === state.deviceTypeFilter);
+  }
+
+  // Filter by vendor
+  if (state.deviceVendorFilter) {
+    devs = devs.filter(d => d.devVendor === state.deviceVendorFilter);
+  }
+
   // Filter by search
   if (state.deviceSearch) {
     const q = state.deviceSearch.toLowerCase();
@@ -732,31 +780,52 @@ let renderDeviceTable = function() {
     : '';
 
   body.innerHTML = `
+    <div class="device-stat-cards">
+      <div class="stat-card"><div class="stat-num">${state.devices.length}</div><div class="stat-label">总设备</div></div>
+      <div class="stat-card stat-online"><div class="stat-num">${state.devices.filter(d => (d.devStatus || 'secure') !== 'isolated').length}</div><div class="stat-label">在线</div></div>
+      <div class="stat-card stat-cam"><div class="stat-num">${state.devices.filter(d => d.devType === 'camera').length}</div><div class="stat-label">摄像头</div></div>
+      <div class="stat-card stat-sensor"><div class="stat-num">${state.devices.filter(d => d.devType === 'sensor' || d.devType === 'plc').length}</div><div class="stat-label">工控</div></div>
+      <div class="stat-card stat-infra"><div class="stat-num">${state.devices.filter(d => ['switch','gateway','firewall'].includes(d.devType)).length}</div><div class="stat-label">基础设施</div></div>
+    </div>
     <div class="rp-device-table-wrap">
       <table class="device-table">
         <thead>
           <tr>
-            <th class="sortable" data-sort="devMAC">MAC${sortIcon('devMAC')}</th>
             <th class="sortable" data-sort="devName">名称${sortIcon('devName')}</th>
-            <th class="sortable" data-sort="devLastIP">IP${sortIcon('devLastIP')}</th>
-            <th class="sortable" data-sort="devVendor">厂商${sortIcon('devVendor')}</th>
+            <th>状态</th>
             <th class="sortable" data-sort="devType">类型${sortIcon('devType')}</th>
-            <th class="sortable" data-sort="devStatus">状态${sortIcon('devStatus')}</th>
+            <th class="sortable" data-sort="devLastIP">IP${sortIcon('devLastIP')}</th>
+            <th>MAC</th>
+            <th class="sortable" data-sort="devVendor">厂商${sortIcon('devVendor')}</th>
+            <th>型号</th>
+            <th>开放端口</th>
+            <th>协议</th>
+            <th>交换机端口</th>
+            <th>固件</th>
           </tr>
         </thead>
         <tbody>
           ${page.map(d => {
             const status = d.devStatus || d.devForceStatus || 'secure';
+            const ports = (() => { try { return JSON.parse(d.devOpenPorts || '[]'); } catch { return []; } })();
+            const protos = (() => { try { return JSON.parse(d.devProtocols || '[]'); } catch { return []; } })();
+            const portsHtml = ports.slice(0, 5).map(p => '<span class="port-badge">' + p + '</span>').join('') || '-';
+            const protosHtml = protos.slice(0, 4).map(p => '<span class="proto-badge">' + p + '</span>').join('') || '-';
             return `<tr>
-              <td class="td-mono">${escapeHtml(d.devMAC || '-')}</td>
-              <td>${escapeHtml(d.devName || '-')}</td>
-              <td class="td-mono">${escapeHtml(d.devLastIP || d.devPrimaryIPv4 || '-')}</td>
-              <td>${escapeHtml(d.devVendor || '-')}</td>
-              <td>${escapeHtml(d.devType || '-')}</td>
+              <td class="td-name">${escapeHtml(d.devName || '-')}</td>
               <td><span class="status-badge ${status}">${status}</span></td>
+              <td>${escapeHtml(d.devType || '-')}</td>
+              <td class="td-mono">${escapeHtml(d.devLastIP || '-')}</td>
+              <td class="td-mono td-mac">${escapeHtml(d.devMAC || '-')}</td>
+              <td>${escapeHtml(d.devVendor || '-')}</td>
+              <td class="td-model">${escapeHtml(d.devModel || '-')}</td>
+              <td class="td-ports">${portsHtml}</td>
+              <td class="td-protos">${protosHtml}</td>
+              <td class="td-mono">${escapeHtml(d.devSwitchPort || '-')}</td>
+              <td class="td-fw">${escapeHtml(d.devFirmwareVersion || '-')}</td>
             </tr>`;
           }).join('')}
-          ${page.length === 0 ? '<tr><td colspan="6" class="td-empty">无匹配设备</td></tr>' : ''}
+          ${page.length === 0 ? '<tr><td colspan="11" class="td-empty">无匹配设备</td></tr>' : ''}
         </tbody>
       </table>
     </div>
@@ -1453,7 +1522,7 @@ async function deleteWorkflow(index) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Override renderDeviceTable with enhanced filters + row clicks
+// Override renderDeviceTable with enhanced columns + stat cards + row clicks
 // ═══════════════════════════════════════════════════════════════════
 
 renderDeviceTable = function() {
@@ -1465,7 +1534,7 @@ renderDeviceTable = function() {
   if (state.deviceVendorFilter) devs = devs.filter(d => (d.devVendor || '') === state.deviceVendorFilter);
   if (state.deviceSearch) {
     const q = state.deviceSearch.toLowerCase();
-    devs = devs.filter(d => ['devMAC','devName','devLastIP','devVendor','devType'].some(k => (d[k]||'').toLowerCase().includes(q)));
+    devs = devs.filter(d => ['devMAC','devName','devLastIP','devVendor','devType','devModel'].some(k => (d[k]||'').toLowerCase().includes(q)));
   }
   const key = state.deviceSortKey;
   const dir = state.deviceSortDir === 'asc' ? 1 : -1;
@@ -1479,30 +1548,53 @@ renderDeviceTable = function() {
   const page = devs.slice(start, start + state.devicePageSize);
   const sortIcon = (k) => state.deviceSortKey === k ? (state.deviceSortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
+  const parseJSON = (s) => { try { return JSON.parse(s || '[]'); } catch { return []; } };
+
   body.innerHTML = `
+    <div class="device-stat-cards">
+      <div class="stat-card"><div class="stat-num">${state.devices.length}</div><div class="stat-label">总设备</div></div>
+      <div class="stat-card stat-online"><div class="stat-num">${state.devices.filter(d => (d.devStatus || 'secure') !== 'isolated').length}</div><div class="stat-label">在线</div></div>
+      <div class="stat-card stat-cam"><div class="stat-num">${state.devices.filter(d => d.devType === 'camera').length}</div><div class="stat-label">摄像头</div></div>
+      <div class="stat-card stat-sensor"><div class="stat-num">${state.devices.filter(d => ['sensor','plc'].includes(d.devType)).length}</div><div class="stat-label">工控</div></div>
+      <div class="stat-card stat-infra"><div class="stat-num">${state.devices.filter(d => ['switch','gateway','firewall'].includes(d.devType)).length}</div><div class="stat-label">基础设施</div></div>
+    </div>
     <div class="rp-device-table-wrap">
       <table class="device-table">
         <thead><tr>
-          <th class="sortable" data-sort="devMAC">MAC${sortIcon('devMAC')}</th>
           <th class="sortable" data-sort="devName">名称${sortIcon('devName')}</th>
-          <th class="sortable" data-sort="devLastIP">IP${sortIcon('devLastIP')}</th>
-          <th class="sortable" data-sort="devVendor">厂商${sortIcon('devVendor')}</th>
+          <th>状态</th>
           <th class="sortable" data-sort="devType">类型${sortIcon('devType')}</th>
-          <th class="sortable" data-sort="devStatus">状态${sortIcon('devStatus')}</th>
+          <th class="sortable" data-sort="devLastIP">IP${sortIcon('devLastIP')}</th>
+          <th>MAC</th>
+          <th class="sortable" data-sort="devVendor">厂商${sortIcon('devVendor')}</th>
+          <th>型号</th>
+          <th>开放端口</th>
+          <th>协议</th>
+          <th>交换机端口</th>
+          <th>固件</th>
         </tr></thead>
         <tbody>
           ${page.map((d, pi) => {
             const status = d.devStatus || d.devForceStatus || 'secure';
+            const ports = parseJSON(d.devOpenPorts);
+            const protos = parseJSON(d.devProtocols);
+            const portsHtml = ports.slice(0, 5).map(p => '<span class="port-badge">' + p + '</span>').join('') || '-';
+            const protosHtml = protos.slice(0, 4).map(p => '<span class="proto-badge">' + p + '</span>').join('') || '-';
             return `<tr data-dev-index="${start + pi}">
-              <td class="td-mono">${escapeHtml(d.devMAC || '-')}</td>
-              <td>${escapeHtml(d.devName || '-')}</td>
-              <td class="td-mono">${escapeHtml(d.devLastIP || d.devPrimaryIPv4 || '-')}</td>
-              <td>${escapeHtml(d.devVendor || '-')}</td>
-              <td>${escapeHtml(d.devType || '-')}</td>
+              <td class="td-name">${escapeHtml(d.devName || '-')}</td>
               <td><span class="status-badge ${status}">${status}</span></td>
+              <td>${escapeHtml(d.devType || '-')}</td>
+              <td class="td-mono">${escapeHtml(d.devLastIP || '-')}</td>
+              <td class="td-mono td-mac">${escapeHtml(d.devMAC || '-')}</td>
+              <td>${escapeHtml(d.devVendor || '-')}</td>
+              <td class="td-model">${escapeHtml(d.devModel || '-')}</td>
+              <td class="td-ports">${portsHtml}</td>
+              <td class="td-protos">${protosHtml}</td>
+              <td class="td-mono">${escapeHtml(d.devSwitchPort || '-')}</td>
+              <td class="td-fw">${escapeHtml(d.devFirmwareVersion || '-')}</td>
             </tr>`;
           }).join('')}
-          ${page.length === 0 ? '<tr><td colspan="6" class="td-empty">无匹配设备</td></tr>' : ''}
+          ${page.length === 0 ? '<tr><td colspan="11" class="td-empty">无匹配设备</td></tr>' : ''}
         </tbody>
       </table>
     </div>
@@ -1526,27 +1618,7 @@ renderDeviceTable = function() {
   });
 };
 
-// Override renderReportsControls to add Type + Vendor filters
-const _origRenderControls = renderReportsControls;
-renderReportsControls = function() {
-  _origRenderControls();
-  if (state.rpTab !== 'devices') return;
-  const wrap = document.getElementById('rp-controls');
-  if (!wrap) return;
-  const types = [...new Set(state.devices.map(d => d.devType).filter(Boolean))].sort();
-  const vendors = [...new Set(state.devices.map(d => d.devVendor).filter(Boolean))].sort();
-  if (!types.length && !vendors.length) return;
-  const typeSelect = document.createElement('select');
-  typeSelect.className = 'ops-input rp-select';
-  typeSelect.innerHTML = `<option value="">全部类型</option>${types.map(t => `<option value="${t}" ${state.deviceTypeFilter === t ? 'selected' : ''}>${t}</option>`).join('')}`;
-  const vendorSelect = document.createElement('select');
-  vendorSelect.className = 'ops-input rp-select';
-  vendorSelect.innerHTML = `<option value="">全部厂商</option>${vendors.map(v => `<option value="${v}" ${state.deviceVendorFilter === v ? 'selected' : ''}>${v}</option>`).join('')}`;
-  wrap.appendChild(typeSelect);
-  wrap.appendChild(vendorSelect);
-  typeSelect.addEventListener('change', (e) => { state.deviceTypeFilter = e.target.value; state.devicePage = 0; renderDeviceTable(); });
-  vendorSelect.addEventListener('change', (e) => { state.deviceVendorFilter = e.target.value; state.devicePage = 0; renderDeviceTable(); });
-};
+// Type + Vendor filters already included in renderReportsControls above
 
 // ═══════════════════════════════════════════════════════════════════
 // Add Workflow Button
@@ -1577,6 +1649,168 @@ const _origInitDash = initDashboard;
 document.addEventListener('DOMContentLoaded', () => {
   initDevicePanel();
   initAddWorkflowBtn();
-  // Replace handleConfirm with modal version
-  // (handleConfirm keeps its inline approach for now, but showToast is available)
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// Tool Result Card Rendering
+// ═══════════════════════════════════════════════════════════════════
+
+function renderToolResultCard(tr) {
+  const r = tr.result || {};
+  if (r.error || !r || Object.keys(r).length === 0) return null;
+
+  const tool = tr.tool || '';
+  const server = tr.server || '';
+
+  // Scan results — host table
+  if (r.hosts && Array.isArray(r.hosts) && r.hosts.length > 0) {
+    const rows = r.hosts.slice(0, 12).map(h => {
+      const ports = (h.ports || []).slice(0, 6).map(p =>
+        `<span class="port-badge">${typeof p === 'object' ? p.port || p.num : p}</span>`
+      ).join(' ');
+      return `<tr>
+        <td>${escapeHtml(h.ip || '')}</td>
+        <td>${escapeHtml(h.mac || '')}</td>
+        <td>${escapeHtml(h.vendor || '')}</td>
+        <td>${ports || '-'}</td>
+        <td>${escapeHtml(h.os || '')}</td>
+      </tr>`;
+    }).join('');
+    return el('div', 'tool-card tool-card-scan', `
+      <div class="tool-card-header">
+        <span class="tool-card-icon">📡</span>
+        <span class="tool-card-title">网络扫描结果</span>
+        <span class="tool-card-badge">${r.hosts_found || r.hosts.length} 台设备</span>
+      </div>
+      <div class="tool-card-body"><table class="tool-table">
+        <tr><th>IP</th><th>MAC</th><th>厂商</th><th>开放端口</th><th>系统</th></tr>
+        ${rows}
+      </table></div>
+    `);
+  }
+
+  // IoT fingerprint
+  if (r.devices && Array.isArray(r.devices) && r.iot_devices_found !== undefined) {
+    const typeCounts = {};
+    r.devices.forEach(d => { const t = d.type || 'unknown'; typeCounts[t] = (typeCounts[t] || 0) + 1; });
+    const chips = Object.entries(typeCounts).map(([t, c]) =>
+      `<span class="iot-chip iot-chip-${t}">${t} ×${c}</span>`
+    ).join('');
+    return el('div', 'tool-card tool-card-iot', `
+      <div class="tool-card-header">
+        <span class="tool-card-icon">🔍</span>
+        <span class="tool-card-title">IoT 设备指纹</span>
+        <span class="tool-card-badge">${r.iot_devices_found} 台</span>
+      </div>
+      <div class="tool-card-body">${chips}</div>
+    `);
+  }
+
+  // Baseline audit
+  if (r.devices_audited !== undefined) {
+    const score = r.overall_score || 0;
+    const color = score >= 80 ? '#4caf50' : score >= 50 ? '#ff9800' : '#f44336';
+    const checks = (r.checks || r.results || []).slice(0, 6).map(c => {
+      const passed = c.status === 'pass' || c.passed;
+      return `<div class="baseline-check ${passed ? 'check-pass' : 'check-fail'}">
+        <span>${passed ? '✓' : '✗'}</span> ${escapeHtml(c.rule || c.name || c.id || '')}
+      </div>`;
+    }).join('');
+    return el('div', 'tool-card tool-card-baseline', `
+      <div class="tool-card-header">
+        <span class="tool-card-icon">🛡️</span>
+        <span class="tool-card-title">安全基线审计</span>
+        <span class="tool-card-badge">${r.devices_audited} 台设备</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="baseline-score">
+          <svg viewBox="0 0 36 36" class="score-ring"><path class="score-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/><path class="score-fill" stroke="${color}" stroke-dasharray="${score}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/></svg>
+          <span class="score-num" style="color:${color}">${score}%</span>
+        </div>
+        ${checks || '<div class="baseline-check">无详细检查结果</div>'}
+      </div>
+    `);
+  }
+
+  // CVE results
+  if (r.cves && Array.isArray(r.cves)) {
+    const rows = r.cves.slice(0, 6).map(c => {
+      const cvss = c.cvss || c.score || 0;
+      const sev = cvss >= 9 ? 'critical' : cvss >= 7 ? 'high' : cvss >= 4 ? 'medium' : 'low';
+      return `<tr>
+        <td><span class="cve-id">${escapeHtml(c.id || c.cve_id || '')}</span></td>
+        <td><span class="sev-badge sev-${sev}">${sev}</span></td>
+        <td>${cvss}</td>
+        <td>${escapeHtml((c.description || '').substring(0, 60))}</td>
+      </tr>`;
+    }).join('');
+    return el('div', 'tool-card tool-card-cve', `
+      <div class="tool-card-header">
+        <span class="tool-card-icon">⚠️</span>
+        <span class="tool-card-title">CVE 漏洞查询</span>
+        <span class="tool-card-badge">${r.total_cves || r.cves.length} 条</span>
+      </div>
+      <div class="tool-card-body"><table class="tool-table">
+        <tr><th>CVE ID</th><th>严重程度</th><th>CVSS</th><th>描述</th></tr>
+        ${rows}
+      </table></div>
+    `);
+  }
+
+  // Vuln scan
+  if (r.vulnerabilities && Array.isArray(r.vulnerabilities) && r.vulnerabilities_found !== undefined) {
+    const rows = r.vulnerabilities.slice(0, 6).map(v =>
+      `<tr><td>${escapeHtml(v.target || v.host || '')}</td><td>${escapeHtml(v.port || '')}</td><td>${escapeHtml(v.name || v.vuln || '')}</td></tr>`
+    ).join('');
+    return el('div', 'tool-card tool-card-vuln', `
+      <div class="tool-card-header">
+        <span class="tool-card-icon">🔓</span>
+        <span class="tool-card-title">漏洞扫描</span>
+        <span class="tool-card-badge">${r.vulnerabilities_found} 个</span>
+      </div>
+      <div class="tool-card-body"><table class="tool-table">
+        <tr><th>目标</th><th>端口</th><th>漏洞</th></tr>${rows}
+      </table></div>
+    `);
+  }
+
+  // Default creds
+  if (r.default_creds_found !== undefined || r.weak_credential_count !== undefined) {
+    const n = r.default_creds_found || r.weak_credential_count || 0;
+    const devices = (r.devices || []).slice(0, 6).map(d =>
+      `<div class="cred-item">${escapeHtml(d.ip || d.name || '')} — ${escapeHtml(d.username || 'admin')}/${escapeHtml(d.password || '')}</div>`
+    ).join('');
+    return el('div', 'tool-card tool-card-creds', `
+      <div class="tool-card-header">
+        <span class="tool-card-icon">🔑</span>
+        <span class="tool-card-title">弱密码检测</span>
+        <span class="tool-card-badge">${n} 台弱密码</span>
+      </div>
+      <div class="tool-card-body">${devices || '所有设备密码安全'}</div>
+    `);
+  }
+
+  // Timeline events
+  if (r.events !== undefined && Array.isArray(r.timeline)) {
+    const items = r.timeline.slice(0, 6).map(e =>
+      `<div class="timeline-item"><span class="timeline-time">${escapeHtml(e.time || e.timestamp || '')}</span> ${escapeHtml(e.type || '')}: ${escapeHtml(e.detail || e.message || '')}</div>`
+    ).join('');
+    return el('div', 'tool-card tool-card-timeline', `
+      <div class="tool-card-header">
+        <span class="tool-card-icon">📋</span>
+        <span class="tool-card-title">攻击时间线</span>
+        <span class="tool-card-badge">${r.events} 个事件</span>
+      </div>
+      <div class="tool-card-body">${items || '无事件'}</div>
+    `);
+  }
+
+  return null;
+}
+
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  e.className = cls;
+  e.innerHTML = html;
+  return e;
+}
