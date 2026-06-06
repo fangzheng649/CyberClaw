@@ -467,6 +467,20 @@ async def extract_ioc(capture_id: str = "") -> str:
     logger.info(f"extract_ioc: capture={capture_id or 'latest'}")
     cap_id = capture_id or (max(_captures, key=lambda k: _captures[k].get("started", "")) if _captures else "")
     if not cap_id or cap_id not in _captures:
+        # No capture session — generate mock IoC data for demo/testing
+        mock_indicators = [
+            {"type": "suspicious_port", "detail": "Connection to Telnet port 23 — brute-force target", "severity": "high", "source": "192.168.10.100", "target": "192.168.10.11:23", "port": 23},
+            {"type": "suspicious_port", "detail": "Connection to Reverse Shell port 4444 — Metasploit default", "severity": "critical", "source": "192.168.10.50", "target": "192.168.10.21:4444", "port": 4444},
+            {"type": "scan_behavior", "detail": "Source 192.168.10.100 scanned 15 distinct ports", "severity": "high", "source": "192.168.10.100", "target": "15 ports", "ports_scanned": 15},
+            {"type": "suspicious_dns", "detail": "Suspicious TLD (.xyz): c2-update.xyz", "severity": "medium", "source": "192.168.10.31", "target": "c2-update.xyz"},
+            {"type": "suspicious_dns", "detail": "Random-looking subdomain (possible DGA): a7x9b2k4.update.ml", "severity": "high", "source": "192.168.10.13", "target": "a7x9b2k4.update.ml"},
+        ]
+        return json.dumps({
+            "mode": "mock",
+            "iocs_found": len(mock_indicators),
+            "indicators": mock_indicators,
+            "message": "Mock IoC data — no active capture session",
+        }, ensure_ascii=False, indent=2)
         return json.dumps({"iocs_found": 0, "indicators": [],
                            "message": "No capture data available. Start a capture first."},
                           ensure_ascii=False, indent=2)
@@ -516,6 +530,22 @@ async def analyze_flow(target: str = "") -> str:
     """
     logger.info(f"analyze_flow: target={target or 'all'}")
     if not _captures:
+        return json.dumps({
+            "mode": "mock",
+            "sessions_analyzed": 42,
+            "anomalies_found": 2,
+            "anomalies": [
+                {"type": "c2_pattern", "detail": "Suspected C2 heartbeat: 12 small packets (avg 64B) on 192.168.10.31:443 <-> 45.33.32.156:80", "severity": "high", "source": "192.168.10.31", "target": "45.33.32.156"},
+                {"type": "lateral_movement", "detail": "Internal scanning from 192.168.10.100 to 192.168.10.21 on 5 ports", "severity": "critical", "source": "192.168.10.100", "target": "192.168.10.21", "ports": ["22", "23", "80", "443", "8080"]},
+            ],
+            "flow_summary": {
+                "total_packets": 1247,
+                "unique_sessions": 42,
+                "top_talkers": {"192.168.10.1": 312, "192.168.10.11": 187, "192.168.10.31": 156},
+                "protocols": {"TCP": 890, "UDP": 312, "DNS": 45},
+            },
+            "message": "Mock flow data — no active capture session",
+        }, ensure_ascii=False, indent=2)
         return json.dumps({"sessions_analyzed": 0, "anomalies_found": 0, "anomalies": [],
                            "message": "No capture sessions. Start a capture first."},
                           ensure_ascii=False, indent=2)

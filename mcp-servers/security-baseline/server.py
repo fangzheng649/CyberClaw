@@ -142,26 +142,38 @@ RULES = {
     ],
 }
 
-# ── Device registry — loaded from topology config ──────────────────
+# ── Device registry — loaded from topology config (mock-aware) ─────
 
-_TOPOLOGY_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "topology.json"
+_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 _device_registry_cache: dict | None = None
+_device_registry_cache_mode: bool | None = None
+
+
+def _is_mock_mode() -> bool:
+    try:
+        from server.services.topology_service import is_mock_mode
+        return is_mock_mode()
+    except Exception:
+        return False
 
 
 def _load_device_registry() -> dict:
-    global _device_registry_cache
-    if _device_registry_cache is not None:
+    global _device_registry_cache, _device_registry_cache_mode
+    current_mode = _is_mock_mode()
+    if _device_registry_cache is not None and _device_registry_cache_mode == current_mode:
         return _device_registry_cache
+    config_name = "mock_topology.json" if current_mode else "topology.json"
     try:
-        with open(_TOPOLOGY_PATH, encoding="utf-8") as f:
+        with open(_CONFIG_DIR / config_name, encoding="utf-8") as f:
             config = json.load(f)
         _device_registry_cache = {
             d["ip"]: f"{d['name']} ({d.get('vendor', 'Unknown')})"
             for d in config["devices"]
         }
-        logger.info(f"Loaded {len(_device_registry_cache)} devices from topology config")
+        _device_registry_cache_mode = current_mode
+        logger.info(f"Loaded {len(_device_registry_cache)} devices from {config_name} (mock={current_mode})")
     except Exception as e:
-        logger.error(f"Failed to load topology config: {e}")
+        logger.error(f"Failed to load {config_name}: {e}")
         _device_registry_cache = {}
     return _device_registry_cache
 
@@ -185,7 +197,7 @@ _PORT_RULE_MAP = {
 }
 
 
-def _check_port(ip: str, port: int, timeout: float = 1.5) -> bool:
+def _check_port(ip: str, port: int, timeout: float = 0.8) -> bool:
     """Synchronously check if a TCP port is open on a host."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -197,7 +209,7 @@ def _check_port(ip: str, port: int, timeout: float = 1.5) -> bool:
         return False
 
 
-def _quick_ping(ip: str, timeout: float = 1.0) -> bool:
+def _quick_ping(ip: str, timeout: float = 0.5) -> bool:
     """Quick TCP connect check — if port 80 or 22 is reachable, device is alive."""
     for port in (80, 22, 443):
         try:
@@ -213,22 +225,51 @@ def _quick_ping(ip: str, timeout: float = 1.0) -> bool:
 
 
 async def _is_network_alive(registry: dict) -> bool:
-    """Check if any device in the registry is reachable (quick TCP probe)."""
+    """Check if real IoT devices exist on the network.
+
+    A single open port (e.g. SSH on a router) is NOT enough — we need
+    at least 2 distinct IPs responding, which indicates actual devices.
+    """
     loop = asyncio.get_event_loop()
-    for ip in list(registry.keys())[:3]:
-        alive = await loop.run_in_executor(None, _quick_ping, ip)
-        if alive:
-            return True
-    return False
+    sample_ips = list(registry.keys())[:5]
+    check_ports = [80, 443, 22, 554]
+
+    def _probe(ip, port):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.3)
+            result = sock.connect_ex((ip, port))
+            sock.close()
+            return (ip, result == 0)
+        except (socket.error, OSError):
+            return (ip, False)
+
+    # Probe all IPs × ports concurrently
+    targets = [(ip, p) for ip in sample_ips for p in check_ports]
+    results = await asyncio.gather(
+        *[loop.run_in_executor(None, _probe, ip, port) for ip, port in targets]
+    )
+    responding_ips = {ip for ip, ok in results if ok}
+    alive = len(responding_ips) >= 2
+    if not alive and responding_ips:
+        logger.warning(
+            f"Only {len(responding_ips)} IP(s) responded — likely stray port, using mock"
+        )
+    return alive
 
 
 async def _scan_device(ip: str, ports: dict[int, tuple | None]) -> dict:
-    """Scan a single device's ports and evaluate baseline rules."""
-    open_ports = {}
-    for port in ports:
-        is_open = await asyncio.get_event_loop().run_in_executor(None, _check_port, ip, port)
-        if is_open:
-            open_ports[port] = ports[port]
+    """Scan a single device's ports concurrently and evaluate baseline rules."""
+    loop = asyncio.get_event_loop()
+    # Scan ALL ports in parallel — eliminates the serial bottleneck
+    port_list = list(ports.keys())
+    open_results = await asyncio.gather(
+        *[loop.run_in_executor(None, _check_port, ip, p) for p in port_list]
+    )
+    open_ports = {
+        port_list[i]: ports[port_list[i]]
+        for i, is_open in enumerate(open_results) if is_open
+    }
 
     # Evaluate rules based on actual port state
     passed_rules = []
@@ -281,7 +322,12 @@ async def check_baseline(target: str = "", profile: str = "iot-default", detaile
         detailed: Include per-rule details. Default: false.
     """
     profile = profile if profile in PROFILES else "iot-default"
-    logger.info(f"check_baseline: target={target} profile={profile} (real port scan)")
+    logger.info(f"check_baseline: target={target} profile={profile}")
+
+    # Mock mode: skip network ops, return mock data directly
+    if _is_mock_mode():
+        logger.info("Mock mode active — returning simulated baseline data")
+        return _mock_baseline(profile, detailed)
 
     # Determine which devices to scan
     registry = _load_device_registry()
@@ -290,20 +336,22 @@ async def check_baseline(target: str = "", profile: str = "iot-default", detaile
     else:
         ips = registry
 
-    # Quick network reachability check — avoid 3-minute timeouts on dead networks
-    network_alive = await _is_network_alive(ips)
-    if not network_alive:
-        logger.warning("No devices reachable, returning mock baseline results")
-        return _mock_baseline(profile, detailed)
+    # Scan all devices directly — each device probe is fast (0.3s timeout per port)
+    # Unreachable devices will simply show as unreachable with no open ports
+    # No pre-check needed: the real scan is the check
 
     ports = _PORT_RULE_MAP.get(profile, _PORT_RULE_MAP["iot-default"])
+
+    # Scan ALL devices concurrently — eliminates serial bottleneck
+    ip_items = list(ips.items())
+    scan_results = await asyncio.gather(
+        *[_scan_device(ip, ports) for ip, _ in ip_items]
+    )
 
     devices = []
     total_pass, total_fail, total_critical = 0, 0, 0
 
-    for ip, device_name in ips.items():
-        scan_result = await _scan_device(ip, ports)
-
+    for (ip, device_name), scan_result in zip(ip_items, scan_results):
         total_pass += scan_result["pass"]
         total_fail += scan_result["fail"]
         total_critical += len(scan_result["critical_fail"])
@@ -409,19 +457,27 @@ async def quick_audit() -> str:
     critical_ports = {23: "Telnet", 80: "HTTP", 21: "FTP"}
     results = []
 
-    for ip, device_name in registry.items():
-        open_critical = {}
-        for port, service in critical_ports.items():
-            is_open = await asyncio.get_event_loop().run_in_executor(None, _check_port, ip, port)
-            if is_open:
-                open_critical[port] = service
+    # Scan all devices concurrently
+    reg_items = list(registry.items())
 
-        results.append({
+    async def _check_one(ip, device_name):
+        open_critical = {}
+        port_checks = await asyncio.gather(
+            *[asyncio.get_event_loop().run_in_executor(None, _check_port, ip, p)
+              for p in critical_ports]
+        )
+        for i, is_open in enumerate(port_checks):
+            if is_open:
+                port = list(critical_ports.keys())[i]
+                open_critical[port] = critical_ports[port]
+        return {
             "ip": ip, "device": device_name,
             "status": "FAIL" if open_critical else "PASS",
             "open_critical_ports": open_critical,
             "reachable": len(open_critical) > 0,
-        })
+        }
+
+    results = await asyncio.gather(*[_check_one(ip, name) for ip, name in reg_items])
 
     fail_count = len([r for r in results if r["status"] == "FAIL"])
     return json.dumps({

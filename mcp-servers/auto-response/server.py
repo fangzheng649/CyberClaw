@@ -35,17 +35,28 @@ SWITCH_PASS = os.getenv("SWITCH_SSH_PASS", "")
 _active_actions: list[dict] = []
 _history: list[dict] = []
 
-# Device-to-switch-port mapping — loaded from topology config
-_TOPOLOGY_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "topology.json"
+# Device-to-switch-port mapping — loaded from topology config (mock-aware)
+_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 _device_ports_cache: dict | None = None
+_device_ports_cache_mode: bool | None = None
+
+
+def _is_mock_mode() -> bool:
+    try:
+        from server.services.topology_service import is_mock_mode
+        return is_mock_mode()
+    except Exception:
+        return False
 
 
 def _load_device_ports() -> dict:
-    global _device_ports_cache
-    if _device_ports_cache is not None:
+    global _device_ports_cache, _device_ports_cache_mode
+    current_mode = _is_mock_mode()
+    if _device_ports_cache is not None and _device_ports_cache_mode == current_mode:
         return _device_ports_cache
+    config_name = "mock_topology.json" if current_mode else "topology.json"
     try:
-        with open(_TOPOLOGY_PATH, encoding="utf-8") as f:
+        with open(_CONFIG_DIR / config_name, encoding="utf-8") as f:
             config = json.load(f)
         gateway_ip = next((d["ip"] for d in config["devices"] if d["type"] == "gateway"), SWITCH_IP)
         ports = {}
@@ -57,7 +68,8 @@ def _load_device_ports() -> dict:
                     "port": sp, "name": d["name"],
                 }
         _device_ports_cache = ports
-        logger.info(f"Loaded {len(ports)} device port mappings from topology config")
+        _device_ports_cache_mode = current_mode
+        logger.info(f"Loaded {len(ports)} device port mappings from {config_name} (mock={current_mode})")
     except Exception as e:
         logger.error(f"Failed to load topology config: {e}")
         _device_ports_cache = {}
@@ -315,11 +327,59 @@ async def unblock_ip(ip_address: str) -> str:
 @mcp.tool()
 async def get_response_status() -> str:
     """Get status of all active response actions."""
+    # ── Sync in-memory state with DB device status ──────────────
+    # If a device was restored via HUD/API directly (bypassing this
+    # MCP tool), its DB status is "secure" but our _active_actions
+    # still says "active". Fix the drift here.
+    db_isolated_devices = []
+    try:
+        conn = sqlite3.connect(str(_DB_PATH))
+        rows = conn.execute(
+            'SELECT "devName", "devLastIP", "devMAC", "devStatus" FROM Devices WHERE devIsArchived = 0'
+        ).fetchall()
+        conn.close()
+        db_status = {}
+        for row in rows:
+            name, ip, mac, status = row
+            db_status[ip] = status
+            if status == "isolated":
+                db_isolated_devices.append({
+                    "device_name": name,
+                    "device_ip": ip,
+                    "device_mac": mac,
+                    "status": "isolated",
+                    "source": "database",
+                })
+        # Sync existing in-memory actions with DB
+        for a in _active_actions:
+            if (a["status"] == "active"
+                    and a["type"] == "isolate"
+                    and db_status.get(a["target"]) not in ("isolated", None)):
+                a["status"] = "restored"
+                logger.info(f"Synced action {a['id']} → restored (DB status: {db_status.get(a['target'])})")
+    except Exception as e:
+        logger.debug(f"DB sync check failed: {e}")
+
+    # Merge: in-memory actions + DB isolated devices (deduplicated)
     active = [a for a in _active_actions if a["status"] == "active"]
+    active_ips = {a["target"] for a in active}
+    for d in db_isolated_devices:
+        if d["device_ip"] not in active_ips:
+            active.append({
+                "id": f"db-{d['device_ip']}",
+                "type": "isolate",
+                "target": d["device_ip"],
+                "detail": f"Isolated: {d['device_name']} ({d['device_ip']})",
+                "status": "active",
+                "source": "database",
+            })
+
     return json.dumps({
         "active_actions": len(active),
+        "isolated_devices": len(db_isolated_devices),
         "blocked_ips": len([e for e in _ACL_BLOCKED_IPS if e["status"] == "active"]),
         "actions": active,
+        "isolated_device_list": db_isolated_devices,
         "blocked_ip_list": [{"ip": e["ip"], "reason": e["reason"]} for e in _ACL_BLOCKED_IPS if e["status"] == "active"],
     }, ensure_ascii=False, indent=2)
 

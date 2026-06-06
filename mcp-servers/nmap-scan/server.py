@@ -127,20 +127,33 @@ PORT_SERVICE_MAP = {
 }
 
 # ═══════════════════════════════════════════════════════════════════
-# Device Database — loaded from topology config
+# Device Database — loaded from topology config (mock-aware)
 # ═══════════════════════════════════════════════════════════════════
 
-_TOPOLOGY_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "topology.json"
+_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 _mock_devices_cache: list | None = None
+_mock_devices_cache_mode: bool | None = None
+
+
+def _is_mock_mode() -> bool:
+    """Check if system is in mock mode (safe fallback if server not loaded)."""
+    try:
+        from server.services.topology_service import is_mock_mode
+        return is_mock_mode()
+    except Exception:
+        return False
 
 
 def _load_mock_devices() -> list:
-    """Load device definitions from topology config for mock mode."""
-    global _mock_devices_cache
-    if _mock_devices_cache is not None:
+    """Load device definitions from topology config — picks mock or real based on mode."""
+    global _mock_devices_cache, _mock_devices_cache_mode
+    current_mode = _is_mock_mode()
+    if _mock_devices_cache is not None and _mock_devices_cache_mode == current_mode:
         return _mock_devices_cache
+    config_name = "mock_topology.json" if current_mode else "topology.json"
+    config_path = _CONFIG_DIR / config_name
     try:
-        with open(_TOPOLOGY_PATH, encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         _mock_devices_cache = [
             {
@@ -150,9 +163,10 @@ def _load_mock_devices() -> list:
             }
             for d in config["devices"]
         ]
-        logger.info(f"Loaded {len(_mock_devices_cache)} devices from topology config")
+        _mock_devices_cache_mode = current_mode
+        logger.info(f"Loaded {len(_mock_devices_cache)} devices from {config_name} (mock={current_mode})")
     except Exception as e:
-        logger.error(f"Failed to load topology config: {e}")
+        logger.error(f"Failed to load {config_name}: {e}")
         _mock_devices_cache = []
     return _mock_devices_cache
 
@@ -398,29 +412,57 @@ def _check_credentials(scan: ScanResult) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════
 
 async def _is_subnet_reachable(target: str) -> bool:
-    """Quick check: ping a few IPs in the subnet. If none respond, fall back to mock."""
+    """Check if the subnet has REAL IoT devices (not just a stray port).
+
+    Strategy: if nmap is installed, trust it to scan the network directly.
+    Only use socket probing as a fallback when nmap is unavailable.
+    """
     try:
         net = ipaddress.ip_network(target, strict=False)
         if net.prefixlen == 32:
             return True  # Single host, skip check
-        # Ping gateway + 2 other IPs in quick succession
-        test_ips = [str(net.network_address + 1), str(net.network_address + 10), str(net.network_address + 50)]
-        for ip in test_ips:
-            probe = await asyncio.create_subprocess_exec(
-                "ping", "-n", "1", "-w", "500", ip,
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+
+        # If nmap is installed, trust it — run the scan directly
+        if _has_nmap():
+            return True
+
+        import socket as _socket
+
+        def _probe(ip_port):
+            ip, port = ip_port
+            try:
+                sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+                sock.settimeout(0.3)
+                result = sock.connect_ex((ip, port))
+                sock.close()
+                return (ip, port, result == 0)
+            except (_socket.error, OSError):
+                return (ip, port, False)
+
+        devices = _load_mock_devices()
+        test_ips = [d["ip"] for d in devices[:5]]
+        check_ports = [80, 443, 554, 8080, 22, 161]
+        # Build all (ip, port) combos and probe concurrently
+        targets = [(ip, p) for ip in test_ips for p in check_ports]
+        loop = asyncio.get_event_loop()
+        results = await asyncio.gather(
+            *[loop.run_in_executor(None, _probe, t) for t in targets]
+        )
+        hits = sum(1 for _, _, ok in results if ok)
+        responding_ips = {ip for ip, _, ok in results if ok}
+
+        if hits >= 3 and len(responding_ips) >= 2:
+            return True
+        if hits == 0:
+            logger.warning(f"Subnet {target} has no live devices, falling back to mock mode")
+        else:
+            logger.warning(
+                f"Subnet {target} has only {hits} port(s) on {len(responding_ips)} IP(s) "
+                f"— likely not a real IoT network, falling back to mock"
             )
-            await asyncio.wait_for(probe.wait(), timeout=2)
-            if probe.returncode == 0:
-                # At least one host responds — but check if it's a real IoT network
-                # by seeing if more than just the gateway is alive
-                if ip != test_ips[0]:
-                    return True  # Non-gateway host alive = real network
-        # Only gateway responded or nothing responded — use mock
-        logger.warning(f"Subnet {target} has no live IoT devices, falling back to mock mode")
         return False
     except Exception:
-        return True  # On error, let real scan try
+        return False  # On error, use mock
 
 
 async def _exec_scan(target: str, ports: str | None, scan_type: str, timing: str, timeout: int) -> ScanResult:
