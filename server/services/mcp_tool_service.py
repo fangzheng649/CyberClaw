@@ -588,9 +588,7 @@ def format_tool_results_for_llm(results: list[dict]) -> str:
     """Format tool results for inclusion in LLM prompt."""
     if not results:
         return ""
-    from .topology_service import is_mock_mode
-    source_tag = "演示数据" if is_mock_mode() else "真实数据"
-    parts = [f"[工具调用结果] (数据来源: {source_tag})"]
+    parts = ["[工具调用结果]"]
     for r in results:
         result = r["result"]
         is_error = isinstance(result, dict) and "error" in result

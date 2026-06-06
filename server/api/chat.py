@@ -107,10 +107,6 @@ async def _build_system_prompt() -> str:
             event_count=event_count,
         )
 
-        # Mock 模式提示
-        if is_mock_mode():
-            prompt += '\n\n【重要】当前系统处于 **演示模式（Mock/Demo）**。所有设备为模拟的视频监控系统设备，工具返回的数据为演示数据。请在回答中适当提示用户当前为演示模式，例如首次回答时标注「当前为演示模式」。工具结果的解读应正常进行，但需标注数据来源为「演示数据」而非「真实数据」。'
-
         return prompt
     except Exception:
         return SYSTEM_PROMPT_TEMPLATE.format(

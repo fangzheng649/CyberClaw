@@ -467,6 +467,8 @@ async def _is_subnet_reachable(target: str) -> bool:
 
 async def _exec_scan(target: str, ports: str | None, scan_type: str, timing: str, timeout: int) -> ScanResult:
     _validate_target(target)
+    if _is_mock_mode():
+        return _mock_scan(target, ports)
     if _has_nmap():
         reachable = await _is_subnet_reachable(target)
         if not reachable:
@@ -487,6 +489,10 @@ async def _exec_scan(target: str, ports: str | None, scan_type: str, timing: str
 
 async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
     _validate_target(target)
+    if _is_mock_mode():
+        devices = _load_mock_devices()
+        hosts = [HostResult(ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor")) for d in devices]
+        return ScanResult(command=f"[mock] nmap -sn {target}", hosts=hosts, scan_stats={"hosts_up": str(len(devices)), "mode": "mock"})
     if _has_nmap():
         reachable = await _is_subnet_reachable(target)
         if not reachable:
@@ -503,6 +509,8 @@ async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
 
 async def _exec_service_detect(target: str, ports: str | None, intensity: int, timeout: int) -> ScanResult:
     _validate_target(target)
+    if _is_mock_mode():
+        return _mock_scan(target, ports)
     if _has_nmap():
         reachable = await _is_subnet_reachable(target)
         if not reachable:
@@ -522,6 +530,8 @@ async def _exec_service_detect(target: str, ports: str | None, intensity: int, t
 
 async def _exec_vuln_scan(target: str, scripts: str, timeout: int) -> list[VulnFinding]:
     _validate_target(target)
+    if _is_mock_mode():
+        return _mock_vulns()
     if _has_nmap():
         reachable = await _is_subnet_reachable(target)
         if not reachable:
