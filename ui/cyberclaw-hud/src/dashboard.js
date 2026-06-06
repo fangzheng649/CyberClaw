@@ -10,7 +10,7 @@ const DS = {
 
 const $ = s => document.querySelector(s);
 
-const SEV_COLORS = { critical: '#ff2244', high: '#f97316', medium: '#eab308', low: '#00bbff', info: '#64748b' };
+const SEV_COLORS = { critical: '#ff2244', high: '#f97316', warning: '#eab308', medium: '#f59e0b', low: '#00bbff', info: '#64748b' };
 const FSM_COLORS = { secure: '#00ff88', scanning: '#00bbff', vulnerable: '#ffaa00', attacked: '#ff2244', isolated: '#5a6e88' };
 const SRC_ICONS = { syslog: 'SYS', snmp: 'SNP', mqtt: 'MQT', suricata: 'IDS', scenario: 'SCE' };
 const PROTO_COLORS = {
@@ -173,7 +173,7 @@ function renderAlertCountChart(d) {
       textStyle: { color: '#cbd5e1', fontSize: 11 },
     },
     legend: {
-      data: ['critical', 'high', 'medium', 'low'],
+      data: ['critical', 'high', 'warning', 'medium', 'low', 'info'],
       top: 0, right: 0,
       textStyle: { color: '#64748b', fontSize: 10 },
       itemWidth: 12, itemHeight: 8,
@@ -192,7 +192,7 @@ function renderAlertCountChart(d) {
       axisLabel: { color: '#64748b' },
       splitLine: { lineStyle: { color: '#1e293b' } },
     },
-    series: ['critical', 'high', 'medium', 'low'].map(k => ({
+    series: ['critical', 'high', 'warning', 'medium', 'low', 'info'].map(k => ({
       name: k, type: 'line', stack: 'total', smooth: true,
       areaStyle: { opacity: 0.25 },
       data: d.series?.[k] || [],

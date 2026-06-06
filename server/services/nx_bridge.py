@@ -356,6 +356,25 @@ class NXBridge:
         finally:
             conn.close()
 
+    async def get_alert_counts_by_minute(self, minutes: int = 60):
+        """按 5 分钟粒度聚合事件数。"""
+        loop = self._get_loop()
+        return await loop.run_in_executor(None, lambda: self._sync_get_alert_counts_by_minute(minutes))
+
+    def _sync_get_alert_counts_by_minute(self, minutes):
+        conn = get_temp_db_connection()
+        try:
+            rows = conn.execute(
+                """SELECT strftime('%Y-%m-%d %H:%M', timestamp) as hour, severity, COUNT(*) as count
+                   FROM security_events
+                   WHERE timestamp >= datetime('now', 'localtime', ?)
+                   GROUP BY hour, severity ORDER BY hour""",
+                (f"-{minutes} minutes",),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
     async def count_security_events(self, hours: int = 24):
         loop = self._get_loop()
         return await loop.run_in_executor(None, lambda: self._sync_count_security_events(hours))

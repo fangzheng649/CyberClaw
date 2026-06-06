@@ -24,10 +24,14 @@ class MockStateService:
         logger.info("Mock state service stopped")
 
     async def get_simulated_trends(self, hours: int = 24) -> dict:
-        """从 DB security_events 聚合告警趋势数据。"""
+        """从 DB security_events 聚合告警趋势数据。
+        自动检测数据时间跨度：如果所有事件在同一小时内，切换为分钟粒度以显示趋势。
+        """
         try:
             from .nx_bridge import get_bridge
             bridge = get_bridge()
+
+            # 先用小时粒度查询
             db_trend = await bridge.get_alert_counts_by_hour(hours)
             if db_trend:
                 hourly = {}
@@ -38,6 +42,20 @@ class MockStateService:
                     hourly.setdefault(hour_str, {"critical": 0, "high": 0, "warning": 0, "medium": 0, "low": 0, "info": 0})
                     if sev in hourly[hour_str]:
                         hourly[hour_str][sev] = count
+
+                # 如果所有事件集中在 1-2 个小时桶内，切换为分钟粒度
+                if len(hourly) <= 2:
+                    db_trend_min = await bridge.get_alert_counts_by_minute(hours * 60)
+                    if db_trend_min and len(db_trend_min) > len(db_trend):
+                        hourly = {}
+                        for row in db_trend_min:
+                            bucket = row.get("hour", "")
+                            sev = row.get("severity", "info")
+                            count = row.get("count", 0)
+                            hourly.setdefault(bucket, {"critical": 0, "high": 0, "warning": 0, "medium": 0, "low": 0, "info": 0})
+                            if sev in hourly[bucket]:
+                                hourly[bucket][sev] = count
+
                 if hourly:
                     return {
                         "labels": list(hourly.keys()),
@@ -48,7 +66,7 @@ class MockStateService:
                     }
         except Exception:
             pass
-        return {"labels": [], "series": {"critical": [], "high": [], "medium": [], "low": [], "info": []}}
+        return {"labels": [], "series": {"critical": [], "high": [], "warning": [], "medium": [], "low": [], "info": []}}
 
     async def get_simulated_device_status_distribution(self) -> dict:
         """从 DB 聚合设备状态分布。"""
