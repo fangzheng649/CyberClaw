@@ -59,6 +59,39 @@ _events_loaded = False
 _incident_counter = 0
 
 
+def _load_from_main_db(incident_id: str = "") -> list[dict]:
+    """从主 CyberClaw 数据库 (cyberclaw.db) 的 security_events 表读取事件。"""
+    try:
+        main_db = os.path.join(_DB_DIR, "cyberclaw.db")
+        if not os.path.exists(main_db):
+            return []
+        conn = sqlite3.connect(main_db)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT rowid as id, source_type, severity, message, "
+            "source, target, target_mac, fsm_state, timestamp "
+            "FROM security_events ORDER BY rowid ASC"
+        ).fetchall()
+        conn.close()
+        events = []
+        for r in rows:
+            events.append({
+                "id": r["id"],
+                "incident_id": incident_id or "inc-001",
+                "event_type": r["fsm_state"] or r["source_type"] or "info",
+                "source": r["source"] or "",
+                "target": r["target"] or r["target_mac"] or "",
+                "detail": r["message"] or "",
+                "severity": r["severity"] or "info",
+                "fsm_state": r["fsm_state"] or "",
+                "timestamp": r["timestamp"] or "",
+            })
+        return events
+    except Exception as e:
+        logger.debug(f"Main DB load failed: {e}")
+        return []
+
+
 def _ensure_events_loaded() -> None:
     """Load events from database into memory cache on first access."""
     global _events, _events_loaded, _incident_counter
@@ -147,33 +180,39 @@ async def record_event(event_type: str, source: str = "", target: str = "", deta
 async def get_timeline(incident_id: str = "") -> str:
     """Retrieve the attack timeline for an incident.
 
+    Reads from the main CyberClaw database (security_events table),
+    which is where Demo scenarios and real events are recorded.
+
     Args:
         incident_id: Incident ID. Empty = return all events.
     """
     logger.info(f"get_timeline: incident={incident_id or 'all'}")
-    _ensure_events_loaded()
 
-    # Load from database for freshest data
-    try:
-        conn = _get_conn()
-        if incident_id:
-            rows = conn.execute(
-                "SELECT * FROM timeline_events WHERE incident_id = ? ORDER BY id ASC",
-                (incident_id,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM timeline_events ORDER BY id ASC"
-            ).fetchall()
-        conn.close()
-        events = [dict(r) for r in rows]
-    except Exception:
-        # Fallback to memory cache
-        events = _events if not incident_id else [e for e in _events if e.get("incident_id") == incident_id]
+    # 优先从主 DB security_events 读取（Demo 写入的目标）
+    events = _load_from_main_db(incident_id)
+
+    # 如果主 DB 没有数据，回退到本地 timeline.db
+    if not events:
+        _ensure_events_loaded()
+        try:
+            conn = _get_conn()
+            if incident_id:
+                rows = conn.execute(
+                    "SELECT * FROM timeline_events WHERE incident_id = ? ORDER BY id ASC",
+                    (incident_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM timeline_events ORDER BY id ASC"
+                ).fetchall()
+            conn.close()
+            events = [dict(r) for r in rows]
+        except Exception:
+            events = _events if not incident_id else [e for e in _events if e.get("incident_id") == incident_id]
 
     phases = {}
     for evt in events:
-        phase = evt.get("event_type", "unknown")
+        phase = evt.get("source_type", evt.get("event_type", "unknown"))
         phases.setdefault(phase, []).append(evt)
 
     return json.dumps({
@@ -194,24 +233,28 @@ async def analyze_root_cause(incident_id: str = "") -> str:
         incident_id: Incident ID. Empty = analyze all events.
     """
     logger.info(f"analyze_root_cause: {incident_id or 'latest'}")
-    _ensure_events_loaded()
 
-    # Load from database
-    try:
-        conn = _get_conn()
-        if incident_id:
-            rows = conn.execute(
-                "SELECT * FROM timeline_events WHERE incident_id = ? ORDER BY id ASC",
-                (incident_id,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM timeline_events ORDER BY id ASC"
-            ).fetchall()
-        conn.close()
-        events = [dict(r) for r in rows]
-    except Exception:
-        events = _events if not incident_id else [e for e in _events if e.get("incident_id") == incident_id]
+    # 优先从主 DB 读取
+    events = _load_from_main_db(incident_id)
+
+    # 如果主 DB 没有数据，回退到本地 timeline.db
+    if not events:
+        _ensure_events_loaded()
+        try:
+            conn = _get_conn()
+            if incident_id:
+                rows = conn.execute(
+                    "SELECT * FROM timeline_events WHERE incident_id = ? ORDER BY id ASC",
+                    (incident_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM timeline_events ORDER BY id ASC"
+                ).fetchall()
+            conn.close()
+            events = [dict(r) for r in rows]
+        except Exception:
+            events = _events if not incident_id else [e for e in _events if e.get("incident_id") == incident_id]
 
     if not events:
         return json.dumps({"error": "No events recorded. Record events first or use the event generator.",
@@ -277,24 +320,28 @@ async def generate_report(incident_id: str = "") -> str:
         incident_id: Incident ID. Empty = generate for all events.
     """
     logger.info(f"generate_report: {incident_id or 'latest'}")
-    _ensure_events_loaded()
 
-    # Load from database
-    try:
-        conn = _get_conn()
-        if incident_id:
-            rows = conn.execute(
-                "SELECT * FROM timeline_events WHERE incident_id = ? ORDER BY id ASC",
-                (incident_id,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM timeline_events ORDER BY id ASC"
-            ).fetchall()
-        conn.close()
-        events = [dict(r) for r in rows]
-    except Exception:
-        events = _events if not incident_id else [e for e in _events if e.get("incident_id") == incident_id]
+    # 优先从主 DB 读取
+    events = _load_from_main_db(incident_id)
+
+    # 如果主 DB 没有数据，回退到本地 timeline.db
+    if not events:
+        _ensure_events_loaded()
+        try:
+            conn = _get_conn()
+            if incident_id:
+                rows = conn.execute(
+                    "SELECT * FROM timeline_events WHERE incident_id = ? ORDER BY id ASC",
+                    (incident_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM timeline_events ORDER BY id ASC"
+                ).fetchall()
+            conn.close()
+            events = [dict(r) for r in rows]
+        except Exception:
+            events = _events if not incident_id else [e for e in _events if e.get("incident_id") == incident_id]
 
     if not events:
         return json.dumps({"error": "No events recorded. Cannot generate report.",

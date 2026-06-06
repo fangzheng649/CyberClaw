@@ -1258,9 +1258,12 @@ async function processAIResponse(text) {
 
       const expandEl = document.createElement('div');
       expandEl.className = 'expand-link';
-      expandEl.textContent = '▼ 展开详情';
+      expandEl.textContent = '▲ 收起详情';
       expandEl.addEventListener('click', () => {
-        expandEl.textContent = expandEl.textContent.includes('展开') ? '▲ 收起详情' : '▼ 展开详情';
+        const collapsed = expandEl.textContent.includes('收起');
+        expandEl.textContent = collapsed ? '▼ 展开详情' : '▲ 收起详情';
+        const steps = stepsContainer.querySelectorAll('.step');
+        steps.forEach(s => s.style.display = collapsed ? 'none' : '');
       });
       stepsContainer.appendChild(expandEl);
     }
