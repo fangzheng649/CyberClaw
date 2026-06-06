@@ -9,6 +9,7 @@ import { GlitchPass } from 'three/addons/postprocessing/GlitchPass.js';
 import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import gsap from 'gsap';
+import { saveState, loadState, onStateChange, KEYS } from '../shared/state-sync.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // CyberClaw — "Digital Immune System" Security HUD
@@ -21,10 +22,11 @@ const STATUS_COLORS = {
   vulnerable: new THREE.Color(0xffaa00),
   attacked:   new THREE.Color(0xff2244),
   isolated:   new THREE.Color(0x5a6e88),
+  offline:    new THREE.Color(0x555555),
 };
 
 const STATUS_GLOW = {
-  secure: 0.15, scanning: 0.35, vulnerable: 0.55, attacked: 0.9, isolated: 0.08,
+  secure: 0.15, scanning: 0.35, vulnerable: 0.55, attacked: 0.9, isolated: 0.08, offline: 0.02,
 };
 
 // ── Quality Modes ────────────────────────────────────────────────
@@ -103,6 +105,7 @@ const _geo = {
   attacker: new THREE.OctahedronGeometry(1.2, 0),
   server:   new THREE.BoxGeometry(1.2, 1.8, 0.8),
   gateway:  new THREE.TorusGeometry(0.9, 0.3, 8, 16),
+  access:   new THREE.BoxGeometry(1.0, 1.4, 0.6),
   halo:     new THREE.RingGeometry(1.6, 1.8, 24),
 };
 
@@ -136,7 +139,7 @@ function initScene() {
   state.scene.fog = new THREE.FogExp2(0x030508, 0.008);
 
   state.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 300);
-  state.camera.position.set(0, 32, 40);
+  state.camera.position.set(2, 24, 42);
 
   state.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -174,7 +177,7 @@ function initScene() {
   state.controls.minDistance = 10;
   state.controls.maxDistance = 100;
   state.controls.maxPolarAngle = Math.PI * 0.48;
-  state.controls.target.set(0, 0, 4);
+  state.controls.target.set(2, 0, 0);
 
   // ── Lighting ──────────────────────────────────────────────────
   state.scene.add(new THREE.AmbientLight(0x2a5a4a, 0.45));
@@ -197,7 +200,7 @@ function initScene() {
 function addEnvironment() {
   // Ground grid
   const grid = new THREE.GridHelper(160, 40, 0x0a2a1a, 0x071a12);
-  grid.position.y = -6;
+  grid.position.y = -1.5;
   grid.material.transparent = true;
   grid.material.opacity = 0.25;
   grid.matrixAutoUpdate = false;
@@ -286,13 +289,14 @@ function buildDevice(payload) {
   const pos = payload.pos || [0, 0, 0];
   group.position.set(pos[0], pos[1], pos[2]);
 
-  const status = payload.status || 'secure';
+  const status = payload.online === false ? 'offline' : (payload.status || 'secure');
   const statusColor = STATUS_COLORS[status];
 
   // Scale by device type for better visual distinction
   const typeScale = {
     router: 1.1, switch: 1.0, camera: 0.9, sensor: 0.8,
     plug: 0.7, pc: 0.85, attacker: 1.3, server: 1.0, gateway: 1.0,
+    access: 0.85,
   };
 
   // Solid mesh — dark base
@@ -341,6 +345,14 @@ function buildDevice(payload) {
     mat, edgeMat, haloMat, labelEl, status, typeScale: s,
   };
   state.devices.push(entry);
+
+  // ── Apply initial status visual effects (shrink + shield for isolated) ──
+  if (status === 'isolated') {
+    mesh.scale.set(s * 0.7, s * 0.7, s * 0.7);
+    wireframe.scale.set(s * 0.71, s * 0.71, s * 0.71);
+    spawnShield(entry);
+  }
+
   return entry;
 }
 
@@ -385,15 +397,16 @@ function buildTopology(data) {
 
   // Build devices
   const deviceMap = {};
-  data.devices.forEach(d => {
+  (data.devices || []).forEach(d => {
     const entry = buildDevice(d);
     deviceMap[d.id] = entry;
   });
 
   // Build links
-  data.links.forEach(l => {
-    if (deviceMap[l.from] && deviceMap[l.to]) {
-      buildLink(deviceMap[l.from], deviceMap[l.to]);
+  (data.links || []).forEach(l => {
+    const fromKey = l.from || l.from_;
+    if (deviceMap[fromKey] && deviceMap[l.to]) {
+      buildLink(deviceMap[fromKey], deviceMap[l.to]);
     }
   });
 }
@@ -456,6 +469,11 @@ function updateDeviceStatus(deviceId, newStatus) {
     gsap.to(entry.wireframe.scale, { x: ts * 0.7, y: ts * 0.7, z: ts * 0.7, duration: 0.6, ease: 'power2.in' });
     spawnShield(entry);
   }
+
+  // ── Persist device statuses to localStorage ──
+  const statuses = {};
+  state.devices.forEach(d => { statuses[d.id] = d.status; });
+  saveState(KEYS.hudDeviceStatuses, statuses);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -475,7 +493,7 @@ function fireAttackBeam(fromId, toId, color = 0xff2244) {
   for (let i = 0; i <= 30; i++) {
     const t = i / 30;
     const p = new THREE.Vector3().lerpVectors(fromPos, toPos, t);
-    p.y += Math.sin(t * Math.PI) * 4;
+    p.y += Math.sin(t * Math.PI) * 2.5;
     points.push(p);
   }
   const curve = new THREE.CatmullRomCurve3(points);
@@ -611,6 +629,50 @@ function updateScenarioProgress(step, total) {
   dom.valScenario.textContent = state.scenarioRunning ? `${pct.toFixed(0)}%` : 'READY';
 }
 
+function showNotificationToast(data) {
+  // Accept either a full data object or individual args for backward compat
+  let title, message, severity, hasDetail, guid;
+  if (typeof data === 'object' && data !== null) {
+    title = data.title || '';
+    message = data.message || '';
+    severity = data.severity || 'info';
+    hasDetail = data.has_detail;
+    guid = data.guid;
+  } else {
+    title = arguments[0] || '';
+    message = arguments[1] || '';
+    severity = arguments[2] || 'info';
+    hasDetail = false;
+  }
+
+  const container = document.getElementById('notification-toast-container') || (() => {
+    const c = document.createElement('div');
+    c.id = 'notification-toast-container';
+    c.style.cssText = 'position:fixed;top:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px;max-width:400px;';
+    document.body.appendChild(c);
+    return c;
+  })();
+
+  const colors = { critical: '#ff4444', warning: '#ff9800', info: '#2196f3' };
+  const bg = colors[severity] || colors.info;
+
+  // "查看详情" button — opens Chat page where detail modal is available
+  const detailBtn = hasDetail
+    ? `<button onclick="window.open('/chat/', 'cyberclaw-chat')" style="margin-top:6px;padding:3px 10px;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:4px;color:#00ff88;font-size:10px;cursor:pointer;font-family:monospace;">查看详情</button>`
+    : '';
+
+  const toast = document.createElement('div');
+  toast.style.cssText = `background:${bg}22;border:1px solid ${bg};border-radius:8px;padding:12px 16px;color:#fff;font-size:13px;animation:toast-in 0.3s ease;backdrop-filter:blur(8px);`;
+  toast.innerHTML = `<div style="font-weight:600;margin-bottom:4px;">${title}</div><div style="opacity:0.85;line-height:1.4;">${message}</div>${detailBtn}`;
+
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.5s';
+    setTimeout(() => toast.remove(), 500);
+  }, 5000);
+}
+
 function addAlert(event) {
   state.alerts.unshift(event);
   if (state.alerts.length > 50) state.alerts.pop();
@@ -656,6 +718,10 @@ function addAlert(event) {
 
   state.eventCount++;
   dom.footerEvents.textContent = state.eventCount;
+
+  // ── Persist alerts & device events to localStorage ──
+  saveState(KEYS.hudAlerts, state.alerts);
+  saveState(KEYS.hudDeviceEvents, state.deviceEvents);
 }
 
 function focusDevice(deviceId) {
@@ -679,7 +745,8 @@ function focusDevice(deviceId) {
 function updateDetailPanel(entry) {
   const p = entry.payload;
   const cssColor = getStatusCSS(entry.status);
-  const statusLabel = { secure: 'SECURE', scanning: 'SCANNING', vulnerable: 'VULNERABLE', attacked: 'ATTACKED', isolated: 'ISOLATED' };
+  const statusLabel = { secure: 'SECURE', scanning: 'SCANNING', vulnerable: 'VULNERABLE', attacked: 'ATTACKED', isolated: 'ISOLATED', offline: 'OFFLINE' };
+  const onlineStatus = p.online === false ? '<span style="color:#888;font-size:11px"> ● OFFLINE</span>' : '';
 
   // Connected neighbors
   const neighbors = state.links
@@ -753,9 +820,9 @@ function updateDetailPanel(entry) {
 
   dom.detailPanel.innerHTML = `
     <h2 style="margin:0 0 8px;font-size:16px;">${p.name}</h2>
-    <div class="detail-status-badge ${entry.status}">
+    <div class="detail-status-badge ${p.online === false ? 'offline' : entry.status}">
       <span class="status-dot"></span>
-      ${statusLabel[entry.status] || entry.status.toUpperCase()}
+      ${statusLabel[p.online === false ? 'offline' : entry.status] || entry.status.toUpperCase()}${onlineStatus}
     </div>
     <div class="detail-grid">
       <div class="detail-row"><span class="label">IP</span><span class="value">${p.ip}</span></div>
@@ -824,11 +891,14 @@ function setQualityMode(mode) {
 // WEBSOCKET
 // ═══════════════════════════════════════════════════════════════════
 
+let wsReconnectDelay = 1000;
+
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}/ws`);
 
   ws.onopen = () => {
+    wsReconnectDelay = 1000;
     dom.footerSocket.textContent = 'CONNECTED';
     dom.footerSocket.style.color = '#00ff88';
   };
@@ -836,7 +906,12 @@ function connectWS() {
   ws.onclose = () => {
     dom.footerSocket.textContent = 'RECONNECTING';
     dom.footerSocket.style.color = '#ffaa00';
-    setTimeout(connectWS, 2500);
+    setTimeout(connectWS, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
   };
 
   ws.onmessage = (e) => {
@@ -849,15 +924,21 @@ function connectWS() {
   state.socket = ws;
 }
 
+function _countDeviceStatuses(devices) {
+  const counts = { secure: 0, scanning: 0, vulnerable: 0, attacked: 0, isolated: 0, offline: 0 };
+  (devices || []).forEach(d => {
+    const s = (d.online === false) ? 'offline' : (d.status || 'secure');
+    if (counts[s] !== undefined) counts[s]++;
+  });
+  return counts;
+}
+
 function handleWSMessage(msg) {
   switch (msg.type) {
     case 'init':
       buildTopology(msg);
-      // Set initial metrics from actual device count
       if (msg.devices) {
-        const count = msg.devices.length;
-        state.totalSteps = count;
-        updateMetrics({ secure: count, scanning: 0, vulnerable: 0, attacked: 0, isolated: 0 });
+        updateMetrics(_countDeviceStatuses(msg.devices));
       }
       break;
 
@@ -871,9 +952,7 @@ function handleWSMessage(msg) {
       dom.btnStop.disabled = false;
       buildTopology(msg);
       if (msg.devices) {
-        const count = msg.devices.length;
-        state.totalSteps = count;
-        updateMetrics({ secure: count, scanning: 0, vulnerable: 0, attacked: 0, isolated: 0 });
+        updateMetrics(_countDeviceStatuses(msg.devices));
       }
       break;
 
@@ -886,13 +965,29 @@ function handleWSMessage(msg) {
 
     case 'scenario_stop':
       state.scenarioRunning = false;
+      state.alerts = [];
+      state.deviceEvents = {};
+      dom.alertList.innerHTML = '';
       dom.btnStart.disabled = false;
       dom.btnStop.disabled = true;
       buildTopology(msg);
       if (msg.devices) {
-        const count = msg.devices.length;
-        state.totalSteps = count;
-        updateMetrics({ secure: count, scanning: 0, vulnerable: 0, attacked: 0, isolated: 0 });
+        updateMetrics(_countDeviceStatuses(msg.devices));
+      }
+      updateScenarioProgress(0, state.totalSteps);
+      break;
+
+    case 'scenario_reset':
+      state.scenarioRunning = false;
+      state.scenarioStep = 0;
+      state.alerts = [];
+      state.deviceEvents = {};
+      dom.alertList.innerHTML = '';
+      dom.btnStart.disabled = false;
+      dom.btnStop.disabled = true;
+      buildTopology(msg);
+      if (msg.devices) {
+        updateMetrics(_countDeviceStatuses(msg.devices));
       }
       updateScenarioProgress(0, state.totalSteps);
       break;
@@ -914,7 +1009,7 @@ function handleWSMessage(msg) {
 
     case 'vuln_found':
       updateDeviceStatus(msg.target, 'vulnerable');
-      fireAttackBeam(msg.source || 'kali', msg.target, 0xffaa00);
+      fireAttackBeam(msg.source || 'firewall', msg.target, 0xffaa00);
       addAlert(msg);
       break;
 
@@ -955,6 +1050,7 @@ function handleWSMessage(msg) {
       break;
 
     case 'threat_resolved':
+      if (msg.target) updateDeviceStatus(msg.target, 'secure');
       addAlert(msg);
       break;
 
@@ -968,6 +1064,7 @@ function handleWSMessage(msg) {
         state.totalSteps = msg.totalSteps || state.totalSteps;
         updateScenarioProgress(state.scenarioStep, state.totalSteps);
       }
+      if (msg.mock_mode !== undefined) _updateModeIndicator(msg.mock_mode);
       break;
 
     // ── MCP Tool Events ─────────────────────────────────────────
@@ -998,6 +1095,7 @@ function handleWSMessage(msg) {
         message: `Scan complete: ${scanDevices.length} devices, ${msg.total_hosts || 0} hosts found`,
         type: msg.scan_type,
       });
+      saveState(KEYS.hudScanData, state.deviceScanData);
       break;
     }
 
@@ -1013,6 +1111,7 @@ function handleWSMessage(msg) {
       if (vDevs.length > 0) {
         addAlert({ severity: 'critical', target: devId, message: `${vDevs.length} vulnerabilities found`, type: 'vuln_result' });
       }
+      saveState(KEYS.hudScanData, state.deviceScanData);
       break;
     }
 
@@ -1030,6 +1129,7 @@ function handleWSMessage(msg) {
         message: `CVE check: ${msg.total_cves || 0} CVEs (${msg.critical || 0} critical, ${msg.high || 0} high)`,
         type: 'cve_result',
       });
+      saveState(KEYS.hudScanData, state.deviceScanData);
       break;
     }
 
@@ -1045,6 +1145,8 @@ function handleWSMessage(msg) {
         message: `Baseline audit: score ${msg.overall_score}/100`,
         type: 'baseline_result',
       });
+      saveState(KEYS.hudBaselineData, state.baselineData);
+      saveState(KEYS.hudBaselineOverall, state.baselineOverall);
       break;
     }
 
@@ -1076,7 +1178,7 @@ function handleWSMessage(msg) {
       const alertSev = sevMap[evt.severity] || 'info';
 
       // Find device by hostname (IP)
-      const hostDev = state.devices.find(d => d.ip === evt.hostname);
+      const hostDev = state.devices.find(d => (d.ip || d.payload?.ip) === evt.hostname);
       if (hostDev && ['critical', 'alert', 'emergency'].includes(evt.severity)) {
         updateDeviceStatus(hostDev.id, 'attacked');
       }
@@ -1140,6 +1242,17 @@ function handleWSMessage(msg) {
       break;
     }
     case 'traffic_stats': {
+      break;
+    }
+
+    // ── Notification from scheduler/security events ────────────────
+    case 'notification': {
+      showNotificationToast(msg);
+      addAlert({
+        severity: msg.severity === 'critical' ? 'critical' : msg.severity === 'warning' ? 'warning' : 'info',
+        message: `${msg.title}: ${msg.message}`,
+        type: 'notification',
+      });
       break;
     }
   }
@@ -1220,6 +1333,11 @@ function setupInteraction() {
   // Collector controls
   document.getElementById('btn-collector-start').addEventListener('click', () => startCollector());
   document.getElementById('btn-collector-stop').addEventListener('click', () => stopCollector());
+
+  // Nav: open Chat in new window (preserves HUD state)
+  document.getElementById('nav-chat')?.addEventListener('click', () => {
+    window.open('/chat/', 'cyberclaw-chat');
+  });
 
   // Resize
   window.addEventListener('resize', onResize);
@@ -1414,7 +1532,7 @@ function animate() {
 
   // Device idle animations
   state.devices.forEach((entry, i) => {
-    const bob = Math.sin(t * 0.8 + i * 0.7) * 0.15;
+    const bob = Math.sin(t * 0.8 + i * 0.7) * 0.06;
     entry.group.position.y = (entry.payload.pos?.[1] || 0) + bob;
 
     // Attacked pulse (smooth, not flashy)
@@ -1460,11 +1578,78 @@ async function boot() {
 
   setLoading(30, 'Loading IoT topology...');
 
+  // ── Restore persisted state from localStorage ────────────────
+  setLoading(45, 'Restoring previous session...');
+  // Restore alert timeline — directly fill state & DOM without saveState calls
+  const savedAlerts = loadState(KEYS.hudAlerts, []);
+  if (savedAlerts.length > 0) {
+    state.alerts = savedAlerts;
+    state.deviceEvents = loadState(KEYS.hudDeviceEvents, {});
+    // Rebuild alert cards in DOM
+    savedAlerts.slice().reverse().forEach(a => {
+      const card = document.createElement('div');
+      card.className = 'alert-card';
+      card.dataset.severity = a.severity || 'info';
+      const time = a.time || new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      card.innerHTML = `
+        <span class="alert-time">${time}</span>
+        <span class="alert-severity ${a.severity || 'info'}">${a.severity || 'info'}</span>
+        <div class="alert-msg">${a.message || a.type}</div>
+      `;
+      if (a.target || a.source) {
+        card.addEventListener('click', () => focusDevice(a.target || a.source));
+      }
+      dom.alertList.insertBefore(card, dom.alertList.firstChild);
+    });
+    // Trim DOM if needed
+    while (dom.alertList.children.length > 40) {
+      dom.alertList.removeChild(dom.alertList.lastChild);
+    }
+    state.eventCount = savedAlerts.length;
+    dom.footerEvents.textContent = state.eventCount;
+  }
+  // Restore device scan/CVE/baseline data (in-memory only, no DOM yet)
+  state.deviceScanData = loadState(KEYS.hudScanData, {});
+  state.baselineData = loadState(KEYS.hudBaselineData, {});
+  state.baselineOverall = loadState(KEYS.hudBaselineOverall, null);
+  if (!state.deviceEvents || Object.keys(state.deviceEvents).length === 0) {
+    state.deviceEvents = loadState(KEYS.hudDeviceEvents, {});
+  }
+
   setLoading(60, 'Establishing real-time link...');
   connectWS();
 
   setLoading(80, 'Calibrating threat sensors...');
   setupInteraction();
+
+  // ── Listen for state changes from Chat page ─────────────────
+  onStateChange((changedKey) => {
+    // If Chat page triggers a scan or other action, the WS will
+    // push results here too — no special handling needed.
+  });
+
+  // ── Listen for isolation events from Chat via BroadcastChannel ──
+  try {
+    const _isoBC = new BroadcastChannel('cyberclaw-sync');
+    _isoBC.addEventListener('message', (e) => {
+      const d = e.data;
+      if (d?.key === 'cc_isolation_event' && d.deviceIp) {
+        // Find device by IP and update status
+        const entry = state.devices.find(dev => {
+          const ip = dev.payload?.ip || dev.payload?.devLastIP || '';
+          return ip === d.deviceIp;
+        });
+        if (entry) {
+          updateDeviceStatus(entry.id, 'isolated');
+          addAlert({
+            severity: 'high',
+            message: `Device ${d.deviceIp} isolated via CyberAgent`,
+            type: 'chat_isolation',
+          });
+        }
+      }
+    });
+  } catch {}
 
   setLoading(100, 'CyberClaw online. All systems nominal.');
   setTimeout(() => {

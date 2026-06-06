@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CyberClaw — Treeviz Topology Preview</title>
+<script src="lib/treeviz.iife.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0f14;
+    color: #e0f5ec;
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Header ──────────────────────────────────────────── */
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 24px;
+    background: rgba(10,15,20,.95);
+    border-bottom: 1px solid rgba(0,187,255,.2);
+  }
+  .header h1 {
+    font-size: 13px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1.5px; color: #00bbff;
+  }
+  .header .meta { font-size: 11px; color: #64748b; }
+
+  /* ── Toolbar ─────────────────────────────────────────── */
+  .toolbar {
+    display: flex; gap: 8px; padding: 8px 24px;
+    background: rgba(10,15,20,.7);
+    border-bottom: 1px solid rgba(0,187,255,.1);
+  }
+  .toolbar button {
+    background: linear-gradient(135deg,rgba(0,187,255,.2),rgba(0,136,255,.2));
+    border: 1px solid rgba(0,187,255,.4); color: #00bbff;
+    padding: 4px 14px; border-radius: 4px; font-size: 11px;
+    font-weight: 600; cursor: pointer; transition: all .2s;
+  }
+  .toolbar button:hover {
+    background: linear-gradient(135deg,rgba(0,187,255,.35),rgba(0,136,255,.35));
+    box-shadow: 0 0 8px rgba(0,187,255,.25);
+  }
+  .sep { width: 1px; background: rgba(0,187,255,.15); margin: 0 4px; }
+
+  /* ── Tree container ──────────────────────────────────── */
+  #topoTree {
+    flex: 1; min-height: 0; overflow: hidden;
+    background: rgba(6,10,16,.6);
+  }
+
+  /* ── Legend ───────────────────────────────────────────── */
+  .legend {
+    display: flex; gap: 16px; padding: 8px 24px;
+    background: rgba(10,15,20,.7);
+    border-top: 1px solid rgba(0,187,255,.1);
+    font-size: 11px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 5px; color: #94a3b8; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ── Node styles ─────────────────────────────────────── */
+  .cc-node {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    background: rgba(8,16,28,.92);
+    border: 1.5px solid rgba(0,187,255,.3);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all .15s;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  .cc-node:hover {
+    background: rgba(0,30,50,.8);
+    box-shadow: 0 0 10px rgba(0,187,255,.2);
+    border-color: rgba(0,187,255,.6);
+  }
+  .cc-node.status-secure   { border-left: 3px solid #00ff88; }
+  .cc-node.status-scanning  { border-left: 3px solid #00bbff; }
+  .cc-node.status-vulnerable{ border-left: 3px solid #ffaa00; }
+  .cc-node.status-attacked  { border-left: 3px solid #ff2244; }
+  .cc-node.status-isolated  { border-left: 3px solid #5a6e88; }
+
+  .cc-icon {
+    font-size: 14px; line-height: 1; flex-shrink: 0;
+  }
+  .cc-name {
+    font-weight: 600; color: #e0f5ec; font-size: 11px;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .cc-ip {
+    font-size: 9px; color: #64748b;
+    font-family: 'Share Tech Mono', monospace;
+    margin-left: 4px;
+  }
+  .cc-status-badge {
+    font-size: 8px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .5px;
+    padding: 1px 5px; border-radius: 3px;
+    margin-left: 4px;
+  }
+  .cc-status-badge.secure    { background: rgba(0,255,136,.12); color: #00ff88; }
+  .cc-status-badge.scanning  { background: rgba(0,187,255,.12); color: #00bbff; }
+  .cc-status-badge.vulnerable{ background: rgba(255,170,0,.12); color: #ffaa00; }
+  .cc-status-badge.attacked  { background: rgba(255,34,68,.15); color: #ff2244; }
+  .cc-status-badge.isolated  { background: rgba(90,110,136,.15); color: #5a6e88; }
+
+  /* collapse toggle */
+  .cc-toggle {
+    position: absolute; right: -14px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 16px; border-radius: 50%;
+    background: rgba(0,187,255,.15); border: 1px solid rgba(0,187,255,.4);
+    color: #00bbff; font-size: 10px; line-height: 16px;
+    text-align: center; cursor: pointer; transition: all .15s;
+  }
+  .cc-toggle:hover { background: rgba(0,187,255,.35); }
+
+  /* network device marker */
+  .cc-net-marker {
+    position: absolute; top: -4px; right: -4px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: rgba(0,187,255,.6); border: 1px solid #00bbff;
+    font-size: 0;
+  }
+
+  /* ── Tooltip ──────────────────────────────────────────── */
+  .cc-tooltip {
+    display: none; position: fixed; z-index: 1000;
+    background: rgba(0,15,25,.95);
+    border: 1px solid rgba(0,187,255,.3);
+    border-radius: 6px; padding: 10px 14px;
+    font-size: 12px; pointer-events: none;
+    min-width: 200px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  }
+  .cc-tooltip.show { display: block; }
+  .cc-tooltip h4 { font-size: 13px; color: #e0f5ec; margin-bottom: 6px; }
+  .cc-tooltip .row { display: flex; gap: 8px; margin-bottom: 3px; color: #94a3b8; font-size: 11px; }
+  .cc-tooltip .row .label { color: #64748b; min-width: 50px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Network Topology</h1>
+  <div class="meta">15 devices · 14 links · Treeviz Layout</div>
+</div>
+
+<div class="toolbar">
+  <button onclick="simulateAttack()">⚡ 模拟攻击场景</button>
+  <button onclick="resetStatus()">↺ 重置状态</button>
+  <div class="sep"></div>
+  <button onclick="expandAll()">展开全部</button>
+  <button onclick="collapseAll()">折叠全部</button>
+</div>
+
+<div id="topoTree"></div>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot" style="background:#00ff88"></span> Secure</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#00bbff"></span> Scanning</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#ffaa00"></span> Vulnerable</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#ff2244"></span> Attacked</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#5a6e88"></span> Isolated</div>
+  <div class="legend-item" style="margin-left:auto;color:#64748b">滚轮缩放 · 拖拽平移 · 点击节点查看详情</div>
+</div>
+
+<div class="cc-tooltip" id="tooltip"></div>
+
+<script>
+// ── Device data ──────────────────────────────────────────────
+const STATUS_COLORS = {
+  secure:'#00ff88', scanning:'#00bbff', vulnerable:'#ffaa00',
+  attacked:'#ff2244', isolated:'#5a6e88',
+};
+
+const TYPE_ICONS = {
+  internet: '<i class="fa-solid fa-globe" style="color:#00bbff"></i>',
+  switch:   '<i class="fa-solid fa-network-wired" style="color:#00e5ff"></i>',
+  firewall: '<i class="fa-solid fa-shield-halved" style="color:#f97316"></i>',
+  gateway:  '<i class="fa-solid fa-server" style="color:#22c55e"></i>',
+  ap:       '<i class="fa-solid fa-wifi" style="color:#7c3aed"></i>',
+  camera:   '<i class="fa-solid fa-video" style="color:#94a3b8"></i>',
+  plc:      '<i class="fa-solid fa-microchip" style="color:#f97316"></i>',
+  lock:     '<i class="fa-solid fa-lock" style="color:#eab308"></i>',
+  sensor:   '<i class="fa-solid fa-temperature-half" style="color:#22c55e"></i>',
+  bulb:     '<i class="fa-solid fa-lightbulb" style="color:#eab308"></i>',
+  plug:     '<i class="fa-solid fa-plug" style="color:#64748b"></i>',
+  hmi:      '<i class="fa-solid fa-display" style="color:#7c3aed"></i>',
+  nas:      '<i class="fa-solid fa-hard-drive" style="color:#00bbff"></i>',
+};
+
+const NETWORK_DEVICES = new Set(['internet','switch','firewall','gateway','ap']);
+
+// Mutable device state (for simulation)
+const deviceState = {
+  'internet':       { name:'Internet', type:'internet', ip:'—', status:'secure', vendor:'—', model:'—' },
+  'switch-core':    { name:'CoreSwitch-H3C', type:'switch', ip:'192.168.10.1', status:'secure', vendor:'H3C', model:'S5130-28S-EI', isNet:true },
+  'firewall':       { name:'USG-Firewall', type:'firewall', ip:'192.168.10.2', status:'secure', vendor:'Huawei', model:'USG6507E', isNet:true },
+  'iot-gateway':    { name:'IoT-Gateway', type:'gateway', ip:'192.168.10.3', status:'secure', vendor:'Advantech', model:'UNO-2484G', isNet:true },
+  'ap-wifi':        { name:'AP-WiFi-Office', type:'ap', ip:'192.168.10.4', status:'secure', vendor:'TP-Link', model:'EAP670', isNet:true },
+  'camera-entrance':{ name:'Camera-Entrance', type:'camera', ip:'192.168.10.11', status:'secure', vendor:'Hikvision', model:'DS-2CD2T86' },
+  'camera-lobby':   { name:'Camera-Lobby', type:'camera', ip:'192.168.10.12', status:'secure', vendor:'Hikvision', model:'DS-2CD2143' },
+  'camera-server':  { name:'Camera-ServerRoom', type:'camera', ip:'192.168.10.13', status:'secure', vendor:'Dahua', model:'DH-IPC-HFW5842' },
+  'plc-s7':         { name:'PLC-S7-1200', type:'plc', ip:'192.168.10.21', status:'secure', vendor:'Siemens', model:'S7-1215C' },
+  'plc-modbus':     { name:'PLC-Modbus-RTU', type:'plc', ip:'192.168.10.22', status:'secure', vendor:'Schneider', model:'M340' },
+  'smart-lock':     { name:'Smart-Lock-A1', type:'lock', ip:'192.168.10.31', status:'secure', vendor:'Dessmann', model:'Q5' },
+  'temp-sensor':    { name:'Temp-Sensor-01', type:'sensor', ip:'192.168.10.32', status:'secure', vendor:'Siemens', model:'QAA2061' },
+  'smart-bulb':     { name:'Smart-Bulb-Living', type:'bulb', ip:'192.168.10.41', status:'secure', vendor:'Philips', model:'Hue White' },
+  'tuya-plug':      { name:'Tuya-Plug-Kitchen', type:'plug', ip:'192.168.10.42', status:'secure', vendor:'Tuya', model:'Smart-Plug' },
+  'hmi-panel':      { name:'HMI-Panel', type:'hmi', ip:'192.168.10.51', status:'secure', vendor:'Weintek', model:'cMT3162X' },
+  'nas-storage':    { name:'NAS-Storage', type:'nas', ip:'192.168.10.61', status:'secure', vendor:'Synology', model:'DS920+' },
+};
+
+// Parent-child relationships: child → parent
+const parentMap = {
+  'switch-core': 'internet',
+  'firewall': 'switch-core',
+  'iot-gateway': 'switch-core',
+  'ap-wifi': 'switch-core',
+  'camera-entrance': 'switch-core',
+  'camera-lobby': 'switch-core',
+  'camera-server': 'switch-core',
+  'plc-s7': 'iot-gateway',
+  'plc-modbus': 'iot-gateway',
+  'smart-lock': 'iot-gateway',
+  'temp-sensor': 'iot-gateway',
+  'smart-bulb': 'ap-wifi',
+  'tuya-plug': 'ap-wifi',
+  'hmi-panel': 'iot-gateway',
+  'nas-storage': 'switch-core',
+};
+
+let collapsedNodes = new Set();
+let myTree = null;
+
+// ── Build hierarchical data for Treeviz ───────────────────────
+function buildTree() {
+  function buildNode(id) {
+    const dev = deviceState[id];
+    if (!dev) return null;
+
+    const children = [];
+    for (const [childId, parentId] of Object.entries(parentMap)) {
+      if (parentId === id) {
+        const child = buildNode(childId);
+        if (child) children.push(child);
+      }
+    }
+
+    return {
+      id: id,
+      name: dev.name,
+      type: dev.type,
+      ip: dev.ip,
+      status: dev.status,
+      vendor: dev.vendor,
+      model: dev.model,
+      isNet: !!dev.isNet,
+      hasChildren: children.length > 0,
+      collapsed: collapsedNodes.has(id),
+      children: collapsedNodes.has(id) ? [] : children,
+    };
+  }
+  return buildNode('internet');
+}
+
+// ── Render node HTML ──────────────────────────────────────────
+function renderNode(nodeData) {
+  const d = nodeData.data;
+  const icon = TYPE_ICONS[d.type] || '<i class="fa-solid fa-circle-nodes" style="color:#64748b"></i>';
+  const isNet = NETWORK_DEVICES.has(d.type) || d.isNet;
+
+  let statusBadge = '';
+  if (d.status !== 'secure' && d.type !== 'internet') {
+    statusBadge = `<span class="cc-status-badge ${d.status}">${d.status}</span>`;
+  }
+
+  let toggleHtml = '';
+  if (d.hasChildren) {
+    const sym = d.collapsed ? '+' : '−';
+    toggleHtml = `<span class="cc-toggle" data-id="${d.id}" onclick="toggleNode('${d.id}')">${sym}</span>`;
+  }
+
+  let netMarker = isNet ? '<span class="cc-net-marker"></span>' : '';
+
+  return `<div class="cc-node status-${d.status}" style="position:relative"
+               data-id="${d.id}" data-vendor="${d.vendor}" data-model="${d.model}"
+               data-ip="${d.ip}" data-type="${d.type}" data-status="${d.status}">
+    <span class="cc-icon">${icon}</span>
+    <span class="cc-name">${d.name}</span>
+    <span class="cc-ip">${d.ip}</span>
+    ${statusBadge}
+    ${toggleHtml}
+    ${netMarker}
+  </div>`;
+}
+
+// ── Link styling ──────────────────────────────────────────────
+function linkColor(nodeData) {
+  const s = nodeData.data.status;
+  if (s === 'attacked') return '#ff2244';
+  if (s === 'vulnerable') return '#ffaa00';
+  if (s === 'scanning') return '#00bbff';
+  if (s === 'isolated') return '#5a6e88';
+  const parentType = deviceState[parentMap[nodeData.data.id]]?.type;
+  if (parentType === 'iot-gateway') return 'rgba(34,197,94,.5)';
+  if (parentType === 'ap' || parentType === 'ap-wifi') return 'rgba(168,85,247,.5)';
+  return 'rgba(0,187,255,.3)';
+}
+
+// ── Init tree ─────────────────────────────────────────────────
+function initTree() {
+  const container = document.getElementById('topoTree');
+  const treeAreaHeight = window.innerHeight - 120;
+
+  container.style.height = treeAreaHeight + 'px';
+  container.style.width = '100%';
+
+  const hierarchy = buildTree();
+
+  // Count leaves/parents for sizing
+  let leaves = 0, parents = 0;
+  function count(n) {
+    if (n.children.length === 0) leaves++;
+    else { parents++; n.children.forEach(count); }
+  }
+  count(hierarchy);
+
+  const nodeHeight = Math.min(Math.max(treeAreaHeight / (leaves + 1), 30), 46);
+  const nodeWidth = Math.min(Math.max(900 / (parents + 1), 120), 200);
+
+  if (myTree) {
+    myTree.refresh(hierarchy);
+    return;
+  }
+
+  myTree = Treeviz.create({
+    htmlId: 'topoTree',
+    renderNode: renderNode,
+    mainAxisNodeSpacing: 'auto',
+    nodeHeight: nodeHeight,
+    nodeWidth: nodeWidth,
+    marginTop: 8,
+    marginLeft: 16,
+    marginRight: 16,
+    isHorizontal: true,
+    hasZoom: true,
+    hasPan: true,
+    idKey: 'id',
+    hasFlatData: false,
+    relationnalField: 'children',
+    linkWidth: () => 1.8,
+    linkColor: linkColor,
+    linkShape: 'quadraticBeziers',
+  });
+
+  myTree.refresh(hierarchy);
+}
+
+// ── Toggle collapse ───────────────────────────────────────────
+function toggleNode(id) {
+  if (collapsedNodes.has(id)) {
+    collapsedNodes.delete(id);
+  } else {
+    collapsedNodes.add(id);
+  }
+  initTree();
+}
+
+function expandAll() {
+  collapsedNodes.clear();
+  initTree();
+}
+
+function collapseAll() {
+  // collapse all parent nodes except root
+  for (const [childId, parentId] of Object.entries(parentMap)) {
+    const children = Object.keys(parentMap).filter(c => parentMap[c] === childId);
+    if (children.length > 0) collapsedNodes.add(childId);
+  }
+  initTree();
+}
+
+// ── Simulate attack ───────────────────────────────────────────
+function simulateAttack() {
+  const stages = [
+    { id:'iot-gateway', status:'scanning' },
+    { id:'plc-s7', status:'vulnerable' },
+    { id:'plc-s7', status:'attacked' },
+    { id:'plc-s7', status:'isolated' },
+    { id:'smart-lock', status:'vulnerable' },
+    { id:'temp-sensor', status:'scanning' },
+    { id:'hmi-panel', status:'scanning' },
+  ];
+  let i = 0;
+  const iv = setInterval(() => {
+    if (i >= stages.length) { clearInterval(iv); return; }
+    const s = stages[i];
+    if (deviceState[s.id]) {
+      deviceState[s.id].status = s.status;
+      initTree();
+    }
+    i++;
+  }, 600);
+}
+
+function resetStatus() {
+  for (const id in deviceState) {
+    deviceState[id].status = 'secure';
+  }
+  initTree();
+}
+
+// ── Tooltip on hover ─────────────────────────────────────────
+document.addEventListener('mouseover', e => {
+  const node = e.target.closest('.cc-node');
+  const tip = document.getElementById('tooltip');
+  if (!node) { tip.classList.remove('show'); return; }
+
+  const id = node.dataset.id;
+  const d = deviceState[id];
+  if (!d) return;
+
+  const sc = STATUS_COLORS[d.status] || '#5a6e88';
+  tip.innerHTML = `
+    <h4>${d.name}</h4>
+    <div class="row"><span class="label">IP</span> ${d.ip}</div>
+    <div class="row"><span class="label">厂商</span> ${d.vendor}</div>
+    <div class="row"><span class="label">型号</span> ${d.model}</div>
+    <div class="row"><span class="label">类型</span> ${d.type}</div>
+    <div class="row"><span class="label">状态</span> <span style="color:${sc};font-weight:600">${d.status.toUpperCase()}</span></div>
+  `;
+  tip.classList.add('show');
+  const rect = node.getBoundingClientRect();
+  tip.style.left = (rect.right + 12) + 'px';
+  tip.style.top = (rect.top) + 'px';
+});
+
+// ── Boot ──────────────────────────────────────────────────────
+window.addEventListener('load', initTree);
+window.addEventListener('resize', () => {
+  if (myTree) { myTree = null; initTree(); }
+});
+</script>
+</body>
+</html>

@@ -206,7 +206,12 @@ button, input { font: inherit; }
   gap: 6px;
   max-height: calc(100vh - 280px);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 255, 136, 0.15) transparent;
 }
+.alert-list::-webkit-scrollbar { width: 3px; }
+.alert-list::-webkit-scrollbar-track { background: transparent; }
+.alert-list::-webkit-scrollbar-thumb { background: rgba(0, 255, 136, 0.15); border-radius: 2px; }
 
 .alert-card {
   padding: 10px 12px;
@@ -301,6 +306,7 @@ button, input { font: inherit; }
 .detail-status-badge.vulnerable { background: rgba(255, 170, 0, 0.1); color: var(--vulnerable); border: 1px solid rgba(255, 170, 0, 0.25); }
 .detail-status-badge.attacked { background: rgba(255, 34, 68, 0.12); color: var(--attacked); border: 1px solid rgba(255, 34, 68, 0.3); }
 .detail-status-badge.isolated { background: rgba(90, 110, 136, 0.12); color: var(--isolated); border: 1px solid rgba(90, 110, 136, 0.25); }
+.detail-status-badge.offline  { background: rgba(80, 80, 80, 0.12); color: #888; border: 1px solid rgba(80, 80, 80, 0.25); }
 
 .status-dot {
   width: 8px;
@@ -940,7 +946,7 @@ button, input { font: inherit; }
 /* ── Floating Nav Button ─────────────────────────────────────────── */
 .nav-float {
   position: fixed;
-  top: 22px;
+  top: 78px;
   right: 14px;
   z-index: 30;
   display: flex;

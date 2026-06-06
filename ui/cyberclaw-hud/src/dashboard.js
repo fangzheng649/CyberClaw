@@ -12,93 +12,100 @@ const $ = s => document.querySelector(s);
 
 const SEV_COLORS = { critical: '#ff2244', high: '#f97316', medium: '#eab308', low: '#00bbff', info: '#64748b' };
 const FSM_COLORS = { secure: '#00ff88', scanning: '#00bbff', vulnerable: '#ffaa00', attacked: '#ff2244', isolated: '#5a6e88' };
-const SRC_ICONS = { syslog: 'SYS', snmp: 'SNP', mqtt: 'MQT', suricata: 'IDS' };
+const SRC_ICONS = { syslog: 'SYS', snmp: 'SNP', mqtt: 'MQT', suricata: 'IDS', scenario: 'SCE' };
+const PROTO_COLORS = {
+  HTTP: '#00bbff', HTTPS: '#00e5ff',
+  MQTT: '#22c55e', COAP: '#4ade80',
+  MODBUS: '#f97316', S7COMM: '#fb923c', PROFINET: '#fdba74',
+  SSH: '#7c3aed', SNMP: '#a78bfa',
+  TCP: '#94a3b8', UDP: '#a1a1aa', ICMP: '#78716c',
+  OTHER: '#64748b',
+};
 
 export function initDashboard() {
   const wrap = $('#dashboard-content');
   if (!wrap) return;
-  renderAlertPanel(wrap);
-  renderDeviceOverview(wrap);
-  renderTrendPanel(wrap);
-  renderTopologyTree(wrap);
-  renderLogPanel(wrap);
-  fetchData();
+
+  // Row 1: Device status tiles
+  const topRow = el('div', 'dp-top-row');
+  renderDeviceOverview(topRow);
+  wrap.appendChild(topRow);
+
+  // Row 2: Trends + Topology (stacked vertically)
+  const bottomRow = el('div', 'dp-bottom-row');
+  renderTrendPanel(bottomRow);
+  renderTopologyTree(bottomRow);
+  wrap.appendChild(bottomRow);
+
   fetchDeviceOverview();
-  fetchTopologyTree();
-  DS._timer = setInterval(() => { if (DS.autoRefresh) { fetchData(); fetchDeviceOverview(); } }, DS.refreshMs);
+  fetchTrends();
+  // Topology loads lazily when the Dashboard tab becomes visible
+  DS._topoLoaded = false;
+  DS._timer = setInterval(() => { if (DS.autoRefresh) { fetchDeviceOverview(); fetchTrends(); } }, DS.refreshMs);
 }
 
-function renderAlertPanel(wrap) {
-  const sec = el('section', 'dashboard-panel');
-  sec.innerHTML = `
-    <div class="dp-header"><h3>Alert List</h3>
-      <div class="dp-filters">
-        <select id="da-sev"><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
-        <select id="da-src"><option value="">All</option><option value="syslog">Syslog</option><option value="snmp">SNMP</option><option value="mqtt">MQTT</option><option value="suricata">Suricata</option></select>
-        <button class="dp-btn" id="da-refresh">Refresh</button>
-      </div>
-    </div>
-    <div class="dp-stats"><span class="dp-badge critical">Crit <b id="ds-crit">0</b></span><span class="dp-badge high">High <b id="ds-high">0</b></span><span class="dp-badge medium">Med <b id="ds-med">0</b></span><span class="dp-badge low">Low <b id="ds-low">0</b></span></div>
-    <div id="da-list" class="da-list"></div>`;
-  wrap.appendChild(sec);
-  $('#da-refresh')?.addEventListener('click', fetchAlerts);
-  $('#da-sev')?.addEventListener('change', fetchAlerts);
-  $('#da-src')?.addEventListener('change', fetchAlerts);
+// Lazy-load topology when Dashboard tab becomes visible (container has dimensions)
+window.addEventListener('dashboard-visible', () => {
+  if (!DS._topoLoaded) {
+    DS._topoLoaded = true;
+    fetchTopologyTree();
+  }
+});
+
+// ── Toast notification helper ────────────────────────────────────
+function toast(msg, type = 'info') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const colors = {
+    info: 'rgba(0,187,255,.15)', success: 'rgba(0,255,136,.15)',
+    warning: 'rgba(234,179,8,.15)', error: 'rgba(255,34,68,.15)',
+  };
+  const borders = {
+    info: 'rgba(0,187,255,.4)', success: 'rgba(0,255,136,.4)',
+    warning: 'rgba(234,179,8,.4)', error: 'rgba(255,34,68,.4)',
+  };
+  const el = document.createElement('div');
+  el.style.cssText = `
+    background:${colors[type] || colors.info}; border:1px solid ${borders[type] || borders.info};
+    color:#cbd5e1; padding:8px 16px; border-radius:6px; font-size:12px; margin-bottom:6px;
+    opacity:0; transition:opacity .3s; pointer-events:none;
+  `;
+  el.textContent = msg;
+  container.appendChild(el);
+  requestAnimationFrame(() => el.style.opacity = '1');
+  setTimeout(() => {
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+  }, 2000);
 }
 
 function renderTrendPanel(wrap) {
   const sec = el('section', 'dashboard-panel');
   sec.innerHTML = `
-    <div class="dp-header"><h3>Security Trends</h3><button class="dp-btn" id="dt-refresh">Refresh</button></div>
+    <div class="dp-header"><h3>安全趋势</h3><button class="dp-btn" id="dt-refresh">刷新</button></div>
     <div class="dp-charts-grid">
       <div id="dt-alert-count" class="dp-chart"></div>
-      <div id="dt-device-status" class="dp-chart"></div>
       <div id="dt-protocol" class="dp-chart"></div>
     </div>`;
   wrap.appendChild(sec);
   $('#dt-refresh')?.addEventListener('click', fetchTrends);
 }
 
-function renderLogPanel(wrap) {
-  const sec = el('section', 'dashboard-panel');
-  sec.innerHTML = `
-    <div class="dp-header"><h3>Log Search</h3></div>
-    <div class="dp-search-bar">
-      <input type="text" id="dl-query" placeholder="Search logs..."/>
-      <select id="dl-sev"><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option></select>
-      <select id="dl-src"><option value="">All</option><option value="syslog">Syslog</option><option value="snmp">SNMP</option><option value="mqtt">MQTT</option><option value="suricata">Suricata</option></select>
-      <button class="dp-btn" id="dl-search">Search</button>
-    </div>
-    <div id="dl-results" class="dl-results"></div>`;
-  wrap.appendChild(sec);
-  $('#dl-search')?.addEventListener('click', searchLogs);
-  $('#dl-query')?.addEventListener('keydown', e => { if (e.key === 'Enter') searchLogs(); });
-}
-
-async function fetchData() { await Promise.all([fetchAlerts(), fetchTrends()]); }
-
 // ── Device Overview Tiles ──────────────────────────────────────────
 function renderDeviceOverview(wrap) {
   const sec = el('section', 'dashboard-panel');
   sec.innerHTML = `
-    <div class="dp-header"><h3>Device Overview</h3><button class="dp-btn" id="do-refresh">Refresh</button></div>
-    <div class="do-tiles" id="do-tiles"></div>
-    <div class="dp-header" style="margin-top:12px;border-top:1px solid rgba(0,187,255,.15);padding-top:10px"><h3>Workflow Events</h3></div>
-    <div class="do-wf-list" id="do-wf-list"><div class="dp-empty">Loading...</div></div>`;
+    <div class="dp-header"><h3>设备状态</h3><button class="dp-btn" id="do-refresh">刷新</button></div>
+    <div class="do-tiles" id="do-tiles"></div>`;
   wrap.appendChild(sec);
   $('#do-refresh')?.addEventListener('click', fetchDeviceOverview);
 }
 
 async function fetchDeviceOverview() {
   try {
-    const [devResp, wfResp] = await Promise.all([
-      fetch('/api/dashboard/db/devices'),
-      fetch('/api/workflows/events?limit=5'),
-    ]);
+    const devResp = await fetch('/api/dashboard/db/devices');
     const devData = devResp.ok ? await devResp.json() : { devices: [] };
-    const wfData = wfResp.ok ? await wfResp.json() : { events: [] };
     renderDeviceTiles(devData.devices || []);
-    renderWfMiniEvents(wfData.events || []);
   } catch (e) { console.error('fetchDeviceOverview', e); }
 }
 
@@ -115,76 +122,29 @@ function renderDeviceTiles(devices) {
     counts[s] = (counts[s] || 0) + 1;
   });
 
+  const total = devices.length || 1;
   wrap.innerHTML = states.map(s => `
     <div class="do-tile" style="--tile-color: ${FSM_COLORS[s]}">
       <div class="do-tile-icon">${icons[s]}</div>
       <div class="do-tile-count">${counts[s]}</div>
       <div class="do-tile-label">${s}</div>
+      <div class="do-tile-pct">${Math.round(counts[s] / total * 100)}%</div>
     </div>
   `).join('');
 }
 
-function renderWfMiniEvents(events) {
-  const wrap = $('#do-wf-list');
-  if (!wrap) return;
-  if (!events.length) {
-    wrap.innerHTML = '<div class="dp-empty">No workflow events</div>';
-    return;
-  }
-  wrap.innerHTML = events.map(evt => {
-    const ts = evt.timestamp ? evt.timestamp.replace('T', ' ').slice(11, 19) : '';
-    return `<div class="do-wf-item">
-      <span class="do-wf-dot"></span>
-      <span class="do-wf-type">${esc(evt.object_type || evt.event_type || 'event')}</span>
-      <span class="do-wf-time">${ts}</span>
-    </div>`;
-  }).join('');
-}
-
-async function fetchAlerts() {
-  try {
-    const sev = $('#da-sev')?.value || '';
-    const src = $('#da-src')?.value || '';
-    let url = `/api/dashboard/alerts?limit=200`;
-    if (sev) url += `&severity=${sev}`;
-    const r = await fetch(url);
-    const d = await r.json();
-    DS.alerts = d.alerts || [];
-    if (src) DS.alerts = DS.alerts.filter(a => a.source_type === src);
-    renderAlerts();
-  } catch (e) { console.error('fetchAlerts', e); }
-}
-
-function renderAlerts() {
-  const box = $('#da-list');
-  if (!box) return;
-  if (!DS.alerts.length) { box.innerHTML = '<div class="dp-empty">No alerts</div>'; updateStats(); return; }
-  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
-  box.innerHTML = DS.alerts.slice(0, 100).map(a => {
-    counts[a.severity] = (counts[a.severity] || 0) + 1;
-    const icon = SRC_ICONS[a.source_type] || '???';
-    const ts = a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '';
-    return `<div class="da-item ${a.severity}">
-      <div class="da-row"><span class="da-sev ${a.severity}">${a.severity.toUpperCase()}</span><span class="da-src">${icon} ${a.source_type}</span><span class="da-time">${ts}</span></div>
-      <div class="da-msg">${esc(a.message)}</div>
-      ${a.target ? `<div class="da-meta">Target: ${esc(a.target)}</div>` : ''}
-    </div>`;
-  }).join('');
-  const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
-  set('#ds-crit', counts.critical); set('#ds-high', counts.high); set('#ds-med', counts.medium); set('#ds-low', counts.low);
-}
-
-function updateStats() { ['crit','high','med','low'].forEach(k => { const e = $(`#ds-${k}`); if (e) e.textContent = '0'; }); }
-
 async function fetchTrends() {
+  // Dispose orphaned device-status chart if it exists from a previous render
+  if (DS.charts['#dt-device-status']) {
+    DS.charts['#dt-device-status'].dispose();
+    delete DS.charts['#dt-device-status'];
+  }
   try {
-    const [ac, ds, pt] = await Promise.all([
+    const [ac, pt] = await Promise.all([
       fetch('/api/dashboard/trends/alert-count?hours=24').then(r => r.json()),
-      fetch('/api/dashboard/trends/device-status').then(r => r.json()),
       fetch('/api/dashboard/trends/protocol-traffic').then(r => r.json()),
     ]);
     renderAlertCountChart(ac);
-    renderDeviceStatusChart(ds);
     renderProtocolChart(pt);
   } catch (e) { console.error('fetchTrends', e); }
 }
@@ -202,86 +162,169 @@ function getChart(id) {
 function renderAlertCountChart(d) {
   const c = getChart('#dt-alert-count');
   if (!c) return;
+  const labels = (d.labels || []).map(l => l.slice(-5));
   c.setOption({
-    title: { text: 'Alerts / Hour', left: 'center', textStyle: { color: '#94a3b8', fontSize: 12 } },
-    tooltip: { trigger: 'axis' },
-    grid: { left: 36, right: 12, top: 32, bottom: 24 },
-    xAxis: { type: 'category', data: (d.labels || []).map(l => l.slice(-5)), axisLabel: { color: '#64748b', fontSize: 9 } },
-    yAxis: { type: 'value', axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { color: '#1e293b' } } },
-    series: ['critical','high','medium','low'].map(k => ({
-      name: k, type: 'line', stack: 'total', areaStyle: { opacity: .25 },
-      data: d.series?.[k] || [], itemStyle: { color: SEV_COLORS[k] },
+    title: { text: '告警/小时', left: 'center', textStyle: { color: '#94a3b8', fontSize: 12 } },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(0,15,25,0.95)',
+      borderColor: 'rgba(0,187,255,0.3)',
+      borderWidth: 1,
+      textStyle: { color: '#cbd5e1', fontSize: 11 },
+    },
+    legend: {
+      data: ['critical', 'high', 'medium', 'low'],
+      top: 0, right: 0,
+      textStyle: { color: '#64748b', fontSize: 10 },
+      itemWidth: 12, itemHeight: 8,
+    },
+    grid: { left: 40, right: 16, top: 48, bottom: 28 },
+    xAxis: {
+      type: 'category', data: labels,
+      axisLabel: {
+        color: '#64748b', fontSize: 9,
+        interval: labels.length > 16 ? 2 : labels.length > 10 ? 1 : 0,
+      },
+      axisLine: { lineStyle: { color: '#1e293b' } },
+    },
+    yAxis: {
+      type: 'value', minInterval: 1,
+      axisLabel: { color: '#64748b' },
+      splitLine: { lineStyle: { color: '#1e293b' } },
+    },
+    series: ['critical', 'high', 'medium', 'low'].map(k => ({
+      name: k, type: 'line', stack: 'total', smooth: true,
+      areaStyle: { opacity: 0.25 },
+      data: d.series?.[k] || [],
+      itemStyle: { color: SEV_COLORS[k] },
+      symbol: 'circle', symbolSize: 4, showSymbol: false,
+      emphasis: { focus: 'series' },
     })),
-  });
-}
-
-function renderDeviceStatusChart(d) {
-  const c = getChart('#dt-device-status');
-  if (!c) return;
-  const labels = d.labels || ['secure','scanning','vulnerable','attacked','isolated'];
-  c.setOption({
-    title: { text: 'Device Status', left: 'center', textStyle: { color: '#94a3b8', fontSize: 12 } },
-    tooltip: { trigger: 'item' },
-    series: [{ type: 'pie', radius: ['35%','65%'], center: ['50%','55%'],
-      data: labels.map((l, i) => ({ value: d.data?.[i] || 0, name: l, itemStyle: { color: FSM_COLORS[l] || '#64748b' } })),
-      label: { color: '#94a3b8', fontSize: 10 },
-    }],
   });
 }
 
 function renderProtocolChart(d) {
   const c = getChart('#dt-protocol');
   if (!c) return;
-  const colors = ['#00e5ff','#7c3aed','#f97316','#22c55e','#ef4444','#eab308'];
+
+  // Build {name, value} pairs from API data, sort descending
+  const raw = (d.labels || []).map((l, i) => ({
+    name: l.toUpperCase(),
+    value: d.data?.[i] || 0,
+  }));
+  raw.sort((a, b) => b.value - a.value);
+
+  // Top 8 + aggregate rest as "Other"
+  const top = raw.slice(0, 8);
+  const rest = raw.slice(8);
+  if (rest.length > 0) {
+    top.push({
+      name: 'OTHER',
+      value: rest.reduce((s, r) => s + r.value, 0),
+    });
+  }
+
+  const names = top.map(t => t.name);
+  const values = top.map(t => t.value);
+  const colors = top.map(t => PROTO_COLORS[t.name] || '#64748b');
+
   c.setOption({
-    title: { text: 'Protocol Traffic', left: 'center', textStyle: { color: '#94a3b8', fontSize: 12 } },
-    tooltip: { trigger: 'item' },
-    series: [{ type: 'pie', radius: '55%', center: ['50%','55%'],
-      data: (d.labels || []).map((l, i) => ({ value: d.data?.[i] || 0, name: l.toUpperCase(), itemStyle: { color: colors[i % colors.length] } })),
-      label: { color: '#94a3b8', fontSize: 10 },
+    title: {
+      text: '协议分布',
+      left: 'center',
+      textStyle: { color: '#94a3b8', fontSize: 12 },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: 'rgba(0,15,25,0.95)',
+      borderColor: 'rgba(0,187,255,0.3)',
+      borderWidth: 1,
+      textStyle: { color: '#cbd5e1', fontSize: 11 },
+    },
+    grid: { left: 72, right: 48, top: 32, bottom: 12 },
+    xAxis: {
+      type: 'value',
+      axisLabel: { color: '#64748b', fontSize: 9 },
+      splitLine: { lineStyle: { color: '#1e293b' } },
+    },
+    yAxis: {
+      type: 'category',
+      data: names,
+      axisLabel: { color: '#94a3b8', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#1e293b' } },
+      axisTick: { show: false },
+    },
+    series: [{
+      type: 'bar',
+      data: values.map((v, i) => ({
+        value: v,
+        itemStyle: {
+          color: colors[i],
+          borderRadius: [0, 4, 4, 0],
+        },
+      })),
+      barWidth: 14,
+      label: {
+        show: true,
+        position: 'right',
+        color: '#94a3b8',
+        fontSize: 10,
+      },
     }],
   });
 }
 
-async function searchLogs() {
-  const q = $('#dl-query')?.value || '';
-  const sev = $('#dl-sev')?.value || '';
-  const src = $('#dl-src')?.value || '';
-  const box = $('#dl-results');
-  if (!box) return;
-  try {
-    const url = `/api/dashboard/logs/search?query=${encodeURIComponent(q)}&severity=${sev}&source=${src}&limit=100`;
-    const r = await fetch(url);
-    const d = await r.json();
-    if (!d.results?.length) { box.innerHTML = '<div class="dp-empty">No results</div>'; return; }
-    box.innerHTML = d.results.map(l => {
-      const icon = SRC_ICONS[l.source_type] || 'LOG';
-      const ts = l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : '';
-      const msg = l.message || JSON.stringify(l).slice(0, 120);
-      return `<div class="dl-item ${l.source_type}">
-        <div class="dl-row"><span class="da-src">${icon}</span><span class="da-time">${ts}</span>${l.severity ? `<span class="da-sev ${l.severity}">${l.severity}</span>` : ''}</div>
-        <div class="dl-msg">${esc(msg)}</div>
-      </div>`;
-    }).join('');
-  } catch (e) { box.innerHTML = '<div class="dp-empty">Search failed</div>'; }
-}
-
 export function onDashboardMessage(msg) {
-  if (['suricata_alert', 'syslog_event', 'snmp_trap', 'mqtt_message', 'traffic_stats'].includes(msg.type)) {
+  // Real-time collector/IDS events
+  const realtimeTypes = ['suricata_alert', 'syslog_event', 'snmp_trap', 'mqtt_message', 'traffic_stats'];
+  // Scenario demo events (attack_detected, port_scan, vulnerability_found, etc.)
+  const scenarioTypes = [
+    'attack_detected', 'scan_started', 'port_scan', 'vulnerability_found',
+    'bruteforce', 'lateral_movement', 'c2_detected', 'device_isolated',
+    'analysis_complete', 'isolation_request', 'threat_resolved',
+    'system_ready', 'scenario_start', 'scenario_complete', 'heartbeat',
+  ];
+  if (realtimeTypes.includes(msg.type) || scenarioTypes.includes(msg.type)) {
     clearTimeout(DS._debounce);
-    DS._debounce = setTimeout(() => fetchData(), 500);
+    DS._debounce = setTimeout(() => { fetchTrends(); fetchDeviceOverview(); }, 500);
+  }
+  // Topology-changing events: only actual device status changes, NOT heartbeat
+  const topoTypes = ['device_isolated', 'attack_detected', 'scan_started',
+    'vulnerability_found', 'threat_resolved', 'scenario_start', 'scenario_complete'];
+  if (topoTypes.includes(msg.type)) {
+    clearTimeout(DS._topoDebounce);
+    DS._topoDebounce = setTimeout(() => fetchTopologyTree(), 800);
   }
 }
 
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-// ── Topology Tree ──────────────────────────────────────────────────
+// ── Topology Treeviz (referenced from NetAlertX network-tree.js) ───
+const TOPO_ICONS = {
+  internet: '<i class="fa-solid fa-globe" style="color:#00bbff"></i>',
+  switch:   '<i class="fa-solid fa-network-wired" style="color:#00e5ff"></i>',
+  firewall: '<i class="fa-solid fa-shield-halved" style="color:#f97316"></i>',
+  gateway:  '<i class="fa-solid fa-server" style="color:#22c55e"></i>',
+  ap:       '<i class="fa-solid fa-wifi" style="color:#7c3aed"></i>',
+  router:   '<i class="fa-solid fa-route" style="color:#00bbff"></i>',
+  camera:   '<i class="fa-solid fa-video" style="color:#94a3b8"></i>',
+  plc:      '<i class="fa-solid fa-microchip" style="color:#f97316"></i>',
+  lock:     '<i class="fa-solid fa-lock" style="color:#eab308"></i>',
+  sensor:   '<i class="fa-solid fa-temperature-half" style="color:#22c55e"></i>',
+  bulb:     '<i class="fa-solid fa-lightbulb" style="color:#eab308"></i>',
+  plug:     '<i class="fa-solid fa-plug" style="color:#64748b"></i>',
+  hmi:      '<i class="fa-solid fa-display" style="color:#7c3aed"></i>',
+  nas:      '<i class="fa-solid fa-hard-drive" style="color:#00bbff"></i>',
+};
+const TOPO_NET_TYPES = new Set(['internet','switch','firewall','gateway','ap','router']);
+
 function renderTopologyTree(wrap) {
   const sec = el('section', 'dashboard-panel');
   sec.innerHTML = `
-    <div class="dp-header"><h3>Network Topology</h3><button class="dp-btn" id="topo-refresh">Refresh</button></div>
-    <div id="topo-tree-wrap"><div class="dp-empty">Loading...</div></div>`;
+    <div class="dp-header"><h3>网络拓扑</h3><button class="dp-btn" id="topo-refresh">刷新</button></div>
+    <div id="topo-tree-wrap" class="topo-tree-container"><div class="dp-empty">加载中...</div></div>`;
   wrap.appendChild(sec);
   $('#topo-refresh')?.addEventListener('click', fetchTopologyTree);
 }
@@ -295,67 +338,222 @@ async function fetchTopologyTree() {
     const data = await resp.json();
     const devices = data.devices || [];
     const links = data.links || [];
-    if (!devices.length) { wrap.innerHTML = '<div class="dp-empty">No topology data</div>'; return; }
-    const tree = buildTopoTree(devices, links);
-    wrap.innerHTML = tree ? renderTopoNode(tree, 0) : '<div class="dp-empty">No root node found</div>';
-    bindTopoToggle(wrap);
+    if (!devices.length) { wrap.innerHTML = '<div class="dp-empty">暂无拓扑数据</div>'; return; }
+    const hierarchy = buildTopoHierarchy(devices, links);
+    if (!hierarchy) { wrap.innerHTML = '<div class="dp-empty">未找到根节点</div>'; return; }
+    DS._topoData = { devices, links };
+    // Wait for DOM layout to complete before Treeviz renders
+    requestAnimationFrame(() => requestAnimationFrame(() => initTopoTree(hierarchy)));
   } catch (e) {
-    wrap.innerHTML = `<div class="dp-empty">Load failed: ${e.message}</div>`;
+    wrap.innerHTML = `<div class="dp-empty">加载失败: ${e.message}</div>`;
   }
 }
 
-function buildTopoTree(devices, links) {
-  const childIds = new Set(links.map(l => l.to));
+// Build hierarchical tree from flat device+link data
+// (adapted from NetAlertX getChildren / getHierarchy)
+function buildTopoHierarchy(devices, links) {
+  const normLinks = links.map(l => ({ from: l.from || l.from_, to: l.to }));
+  const childIds = new Set(normLinks.map(l => l.to));
   const roots = devices.filter(d => !childIds.has(d.id || d.devMAC));
   if (!roots.length) return null;
+
+  // Build parent map: childId → parentId
+  const parentOf = {};
+  normLinks.forEach(l => { parentOf[l.to] = l.from; });
+  const devMap = {};
+  devices.forEach(d => { devMap[d.id || d.devMAC] = d; });
+
+  // Start from root, recursively build children
   const root = roots[0];
-  return buildTopoNode(root, devices, links, new Set());
+  return buildTopoNode(root, devMap, normLinks, parentOf, new Set());
 }
 
-function buildTopoNode(node, devices, links, visited) {
+function buildTopoNode(node, devMap, links, parentOf, visited) {
   const id = node.id || node.devMAC;
   if (visited.has(id)) return null;
   visited.add(id);
-  const children = links
-    .filter(l => l.from === id)
-    .map(l => devices.find(d => (d.id || d.devMAC) === l.to))
+
+  const name = node.name || node.devName || id;
+  const ip = node.ip || node.devLastIP || '';
+  const type = node.type || node.devType || '';
+  const status = node.status || node.devStatus || 'secure';
+  const online = node.online !== undefined ? node.online : true;
+  const isNet = TOPO_NET_TYPES.has(type);
+
+  // Find children of this node
+  const childLinks = links.filter(l => l.from === id);
+  const children = childLinks
+    .map(l => devMap[l.to])
     .filter(Boolean)
-    .map(child => buildTopoNode(child, devices, links, visited))
+    .map(child => buildTopoNode(child, devMap, links, parentOf, visited))
     .filter(Boolean);
+
   return {
-    id, name: node.devName || node.name || id,
-    ip: node.devLastIP || node.ip || '',
-    type: node.devType || node.type || '',
-    status: node.devStatus || node.status || 'secure',
-    children,
+    id, name, ip, type, status, online, isNet,
+    hasChildren: children.length > 0,
+    collapsed: DS._topoCollapsed && DS._topoCollapsed.has(id),
+    children: (DS._topoCollapsed && DS._topoCollapsed.has(id)) ? [] : children,
   };
 }
 
-function renderTopoNode(node, depth) {
-  const FSM_C = { secure: '#00ff88', scanning: '#00bbff', vulnerable: '#ffaa00', attacked: '#ff2244', isolated: '#5a6e88' };
-  const c = FSM_C[node.status] || '#5a6e88';
-  const hasChildren = node.children && node.children.length > 0;
-  const childHtml = hasChildren
-    ? `<ul class="topo-children">${node.children.map(ch => renderTopoNode(ch, depth + 1)).join('')}</ul>`
-    : '';
-  return `<li class="topo-node ${hasChildren ? 'has-children' : ''} ${hasChildren ? '' : 'leaf'}">
-    <div class="topo-node-row">
-      ${hasChildren ? '<span class="topo-toggle">▶</span>' : '<span class="topo-toggle-leaf">●</span>'}
-      <span class="topo-dot" style="background:${c};box-shadow:0 0 4px ${c}"></span>
-      <span class="topo-name">${esc(node.name)}</span>
-      <span class="topo-type">${esc(node.type)}</span>
-      <span class="topo-ip">${esc(node.ip)}</span>
-    </div>
-    ${childHtml}
-  </li>`;
+// Initialize or refresh Treeviz (adapted from NetAlertX initTree)
+function initTopoTree(hierarchy) {
+  if (typeof Treeviz === 'undefined') {
+    const wrap = document.getElementById('topo-tree-wrap');
+    if (wrap) wrap.innerHTML = '<div class="dp-empty">拓扑库加载失败</div>';
+    return;
+  }
+
+  const container = document.getElementById('topo-tree-wrap');
+  if (!container) return;
+
+  // Calculate node sizes based on container
+  const treeHeight = container.offsetHeight || 380;
+  const treeWidth = container.offsetWidth || 800;
+
+  // Count leaves/parents for sizing
+  let leaves = 0, parents = 0;
+  function count(n) {
+    // Count all children, even collapsed ones, for sizing
+    const realChildren = n.hasChildren ? (n.children.length || 1) : 0;
+    if (!n.hasChildren) { leaves++; }
+    else { parents++; if (n.children.length) n.children.forEach(count); }
+  }
+  count(hierarchy);
+  leaves = Math.max(leaves, 1);
+
+  const nodeHeight = Math.min(Math.max(Math.floor(treeHeight / (leaves + 1)), 26), 40);
+  const nodeWidth = Math.min(Math.max(Math.floor(treeWidth / (parents + 2)), 100), 180);
+
+  container.innerHTML = '';
+  container.style.height = '380px';
+  container.style.width = '100%';
+
+  const treeInstance = Treeviz.create({
+    htmlId: 'topo-tree-wrap',
+    renderNode: function(nodeData) {
+      return renderTopoNodeHtml(nodeData);
+    },
+    mainAxisNodeSpacing: 'auto',
+    nodeHeight: nodeHeight,
+    nodeWidth: nodeWidth,
+    marginTop: 6,
+    marginLeft: 12,
+    marginRight: 12,
+    isHorizontal: true,
+    hasZoom: true,
+    hasPan: true,
+    idKey: 'id',
+    hasFlatData: false,
+    relationnalField: 'children',
+    linkWidth: function() { return 1.5; },
+    linkColor: function(nodeData) {
+      const s = nodeData.data.status;
+      if (s === 'attacked') return '#ff2244';
+      if (s === 'vulnerable') return '#ffaa00';
+      if (s === 'scanning') return '#00bbff';
+      if (s === 'isolated') return '#5a6e88';
+      return 'rgba(0,187,255,0.25)';
+    },
+    linkShape: 'quadraticBeziers',
+  });
+
+  treeInstance.refresh(hierarchy);
+  DS._topoTree = treeInstance;
 }
 
-function bindTopoToggle(wrap) {
-  wrap.querySelectorAll('.topo-node.has-children > .topo-node-row').forEach(row => {
-    row.addEventListener('click', () => {
-      const node = row.parentElement;
-      node.classList.toggle('expanded');
-    });
-    row.style.cursor = 'pointer';
-  });
+// Render individual node HTML (adapted from NetAlertX renderNode)
+function renderTopoNodeHtml(nodeData) {
+  const d = nodeData.data;
+  const icon = TOPO_ICONS[d.type] || '<i class="fa-solid fa-circle-nodes" style="color:#64748b"></i>';
+  const isNet = d.isNet || TOPO_NET_TYPES.has(d.type);
+  const isOffline = d.online === false;
+
+  // Status badge (only show for non-secure non-root nodes)
+  let badgeHtml = '';
+  if (isOffline) {
+    badgeHtml = '<span class="topo-node-badge offline">OFFLINE</span>';
+  } else if (d.status !== 'secure' && d.type !== 'internet') {
+    badgeHtml = `<span class="topo-node-badge ${d.status}">${d.status}</span>`;
+  }
+
+  // Network device marker
+  const netMarker = isNet ? '<span class="topo-net-marker"></span>' : '';
+
+  // Collapse/expand toggle
+  let toggleHtml = '';
+  if (d.hasChildren) {
+    const sym = d.collapsed ? '+' : '−';
+    toggleHtml = `<span class="topo-toggle-btn" data-topo-id="${d.id}">${sym}</span>`;
+  }
+
+  return `<div class="topo-node ${isOffline ? 'status-offline' : 'status-' + d.status}" style="position:relative"
+               data-topo-id="${d.id}" data-topo-name="${esc(d.name)}"
+               data-topo-ip="${d.ip}" data-topo-type="${d.type}"
+               data-topo-status="${d.status}" data-topo-net="${isNet}">
+    <span class="topo-node-icon">${icon}</span>
+    <span class="topo-node-name">${esc(d.name)}</span>
+    <span class="topo-node-ip">${esc(d.ip)}</span>
+    ${badgeHtml}
+    ${toggleHtml}
+    ${netMarker}
+  </div>`;
 }
+
+// Handle toggle click (delegated)
+document.addEventListener('click', function(e) {
+  const toggle = e.target.closest('.topo-toggle-btn');
+  if (!toggle) return;
+  e.stopPropagation();
+  const nodeId = toggle.dataset.topoId;
+  if (!nodeId) return;
+  if (!DS._topoCollapsed) DS._topoCollapsed = new Set();
+  if (DS._topoCollapsed.has(nodeId)) {
+    DS._topoCollapsed.delete(nodeId);
+  } else {
+    DS._topoCollapsed.add(nodeId);
+  }
+  // Rebuild with updated collapse state
+  if (DS._topoData) {
+    const hierarchy = buildTopoHierarchy(DS._topoData.devices, DS._topoData.links);
+    if (hierarchy) {
+      DS._topoTree = null;
+      initTopoTree(hierarchy);
+    }
+  }
+});
+
+// Tooltip on hover (delegated)
+document.addEventListener('mouseover', function(e) {
+  const node = e.target.closest('.topo-node');
+  let tip = document.getElementById('topo-tooltip');
+  if (!node) {
+    if (tip) tip.style.display = 'none';
+    return;
+  }
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'topo-tooltip';
+    tip.style.cssText = 'display:none;position:fixed;z-index:1000;background:rgba(0,15,25,.95);border:1px solid rgba(0,187,255,.3);border-radius:6px;padding:8px 12px;font-size:11px;pointer-events:none;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5)';
+    document.body.appendChild(tip);
+  }
+  const name = node.dataset.topoName || '';
+  const ip = node.dataset.topoIp || '';
+  const type = node.dataset.topoType || '';
+  const status = node.dataset.topoStatus || 'secure';
+  const sc = FSM_COLORS[status] || '#5a6e88';
+  tip.innerHTML = `<div style="font-weight:600;color:#e0f5ec;margin-bottom:4px">${name}</div>
+    <div style="color:#64748b;font-family:Share Tech Mono,monospace">${ip}</div>
+    <div style="color:#94a3b8;margin-top:2px">${type}</div>
+    <div style="color:${sc};font-weight:600;margin-top:4px;font-size:10px;text-transform:uppercase">${status}</div>`;
+  const rect = node.getBoundingClientRect();
+  tip.style.display = 'block';
+  tip.style.left = Math.min(rect.right + 10, window.innerWidth - 200) + 'px';
+  tip.style.top = rect.top + 'px';
+});
+document.addEventListener('mouseout', function(e) {
+  if (e.target.closest('.topo-node')) {
+    const tip = document.getElementById('topo-tooltip');
+    if (tip) tip.style.display = 'none';
+  }
+});

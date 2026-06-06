@@ -31,91 +31,91 @@ def format_syslog(facility: int, severity: int, hostname: str, msg: str) -> byte
 # These represent realistic IoT security scenarios for lab testing.
 
 SECURITY_EVENTS = [
-    # ── Brute force login attempts ────────────────────────────────
+    # ── Brute force login attempts (Camera-Entrance 192.168.10.11) ──
     {
-        "facility": 1, "severity": 4,  # user/warning
-        "hostname": "10.0.0.11",
+        "facility": 1, "severity": 4,
+        "hostname": "192.168.10.11",
         "message": "Login failed for user 'admin' from 10.0.1.100 via Telnet (attempt 1/20)",
     },
     {
-        "facility": 1, "severity": 2,  # user/critical
-        "hostname": "10.0.0.11",
+        "facility": 1, "severity": 2,
+        "hostname": "192.168.10.11",
         "message": "Login successful for user 'admin' from 10.0.1.100 via Telnet after 8 attempts",
     },
     {
         "facility": 1, "severity": 4,
-        "hostname": "10.0.0.12",
+        "hostname": "192.168.10.12",
         "message": "Login failed for user 'root' from 10.0.1.100 via Telnet (attempt 3/20)",
     },
-    # ── Port scanning detected ────────────────────────────────────
+    # ── Port scanning detected (CoreSwitch 192.168.10.1) ────────────
     {
-        "facility": 0, "severity": 4,  # kernel/warning
-        "hostname": "10.0.0.1",
-        "message": "SYN flood detected from 10.0.1.100 targeting 10.0.0.0/24 port range 1-1024",
+        "facility": 0, "severity": 4,
+        "hostname": "192.168.10.1",
+        "message": "SYN flood detected from 10.0.1.100 targeting 192.168.10.0/24 port range 1-1024",
     },
     {
-        "facility": 0, "severity": 3,  # kernel/error
-        "hostname": "10.0.0.1",
-        "message": "Port scan detected: 10.0.1.100 scanned 10.0.0.11 ports 23,80,554,8080 in 2.3s",
+        "facility": 0, "severity": 3,
+        "hostname": "192.168.10.1",
+        "message": "Port scan detected: 10.0.1.100 scanned 192.168.10.11 ports 23,80,554,8000 in 2.3s",
     },
-    # ── Configuration changes ─────────────────────────────────────
+    # ── Configuration changes (Camera-ServerRoom 192.168.10.13) ─────
     {
-        "facility": 10, "severity": 5,  # security-auth/notice
-        "hostname": "10.0.0.11",
+        "facility": 10, "severity": 5,
+        "hostname": "192.168.10.11",
         "message": "Configuration changed: firmware update initiated from 10.0.1.100",
     },
     {
         "facility": 10, "severity": 2,
-        "hostname": "10.0.0.13",
+        "hostname": "192.168.10.13",
         "message": "New user 'backdoor' created with admin privileges by unknown source",
     },
-    # ── Anomalous network behavior ────────────────────────────────
+    # ── Anomalous network behavior ──────────────────────────────────
     {
         "facility": 0, "severity": 3,
-        "hostname": "10.0.0.11",
+        "hostname": "192.168.10.11",
         "message": "Outbound connection from IoT device to external IP 185.220.101.34:4443 (suspicious)",
     },
     {
         "facility": 0, "severity": 2,
-        "hostname": "10.0.0.11",
-        "message": "Lateral scan: device attempting SSH to 10.0.0.12, 10.0.0.13, 10.0.0.14",
+        "hostname": "192.168.10.11",
+        "message": "Lateral scan: device attempting SSH to 192.168.10.12, 192.168.10.13, 192.168.10.51",
     },
-    # ── Service disruptions ───────────────────────────────────────
+    # ── Service disruptions (TempSensor 192.168.10.21) ──────────────
     {
         "facility": 1, "severity": 3,
-        "hostname": "10.0.0.21",
+        "hostname": "192.168.10.21",
         "message": "Temperature sensor reading anomaly: 999.9°C (possible sensor compromise)",
     },
     {
         "facility": 1, "severity": 4,
-        "hostname": "10.0.0.50",
-        "message": "MQTT broker: unusual publish rate from 10.0.0.11 (500 msg/s, normal: 5 msg/s)",
+        "hostname": "192.168.10.60",
+        "message": "MQTT broker: unusual publish rate from 192.168.10.11 (500 msg/s, normal: 5 msg/s)",
     },
-    # ── Normal operational events (for contrast) ──────────────────
+    # ── Normal operational events (for contrast) ────────────────────
     {
-        "facility": 1, "severity": 6,  # user/info
-        "hostname": "10.0.0.22",
-        "message": "Pressure reading normal: 101.3 kPa",
+        "facility": 1, "severity": 6,
+        "hostname": "192.168.10.22",
+        "message": "SmokeDetector-F3 status normal: no alarm",
     },
     {
         "facility": 1, "severity": 6,
-        "hostname": "10.0.0.31",
-        "message": "SmartPlug power state: ON, consumption 45W",
+        "hostname": "192.168.10.51",
+        "message": "SmartPlug-AC power state: ON, consumption 45W",
     },
     {
-        "facility": 16, "severity": 6,  # local-use0/info
-        "hostname": "10.0.0.0",
-        "message": "Network topology stable: 11 devices online, 0 alerts",
+        "facility": 16, "severity": 6,
+        "hostname": "192.168.10.100",
+        "message": "Network topology stable: 15 devices online, 0 alerts",
     },
-    # ── Malware indicators ────────────────────────────────────────
+    # ── Malware indicators ──────────────────────────────────────────
     {
-        "facility": 0, "severity": 1,  # kernel/alert
-        "hostname": "10.0.0.11",
+        "facility": 0, "severity": 1,
+        "hostname": "192.168.10.11",
         "message": "CRITICAL: Mirai-like process detected — binary /tmp/.mirai executing C2 callbacks to 185.220.101.34",
     },
     {
         "facility": 0, "severity": 1,
-        "hostname": "10.0.0.12",
+        "hostname": "192.168.10.12",
         "message": "CRITICAL: Known malware signature detected in outbound traffic — Mirai DDoS bot participation",
     },
 ]
