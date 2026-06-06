@@ -251,14 +251,14 @@ async def get_alert_count_trend(hours: int = 24):
             hour = row.get("hour", "")
             sev = row.get("severity", "info")
             count = row.get("count", 0)
-            hourly.setdefault(hour, {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0})
+            hourly.setdefault(hour, {"critical": 0, "high": 0, "warning": 0, "medium": 0, "low": 0, "info": 0})
             if sev in hourly[hour]:
                 hourly[hour][sev] = count
         return {
             "labels": list(hourly.keys()),
             "series": {
                 sev: [h.get(sev, 0) for h in hourly.values()]
-                for sev in ("critical", "high", "medium", "low", "info")
+                for sev in ("critical", "high", "warning", "medium", "low", "info")
             },
         }
 

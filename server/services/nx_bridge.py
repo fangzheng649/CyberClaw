@@ -346,9 +346,9 @@ class NXBridge:
         conn = get_temp_db_connection()
         try:
             rows = conn.execute(
-                """SELECT strftime('%H', timestamp) as hour, severity, COUNT(*) as count
+                """SELECT strftime('%Y-%m-%d %H:00', timestamp) as hour, severity, COUNT(*) as count
                    FROM security_events
-                   WHERE timestamp >= datetime('now', ?)
+                   WHERE timestamp >= datetime('now', 'localtime', ?)
                    GROUP BY hour, severity ORDER BY hour""",
                 (f"-{hours} hours",),
             ).fetchall()
@@ -364,7 +364,7 @@ class NXBridge:
         conn = get_temp_db_connection()
         try:
             row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM security_events WHERE timestamp >= datetime('now', ?)",
+                "SELECT COUNT(*) as cnt FROM security_events WHERE timestamp >= datetime('now', 'localtime', ?)",
                 (f"-{hours} hours",),
             ).fetchone()
             return row["cnt"] if row else 0
