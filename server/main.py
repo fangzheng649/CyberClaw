@@ -218,16 +218,13 @@ async def lifespan(app: FastAPI):
         logger.info("Security scheduler started")
     except Exception as e:
         logger.warning(f"Security scheduler start failed: {e}")
-    # Mock 模式：启动设备状态模拟器
+    # Mock 模式：初始化数据查询服务（不自动生成事件）
     if is_mock_mode():
         try:
             from .services.mock_state_service import get_mock_simulator
-            sim = get_mock_simulator()
-            sim.set_broadcast(broadcast_event)
-            await sim.start()
-            logger.info("Mock state simulator started")
+            await get_mock_simulator().start()
         except Exception as e:
-            logger.warning(f"Mock state simulator start failed: {e}")
+            logger.warning(f"Mock state service start failed: {e}")
     yield
     hb_task.cancel()
     # 停止 Mock 模拟器
