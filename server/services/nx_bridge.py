@@ -166,6 +166,22 @@ class NXBridge:
         finally:
             conn.close()
 
+    async def reset_all_device_statuses(self) -> int:
+        """Reset all devices to 'secure'. Returns number of devices reset."""
+        loop = self._get_loop()
+        return await loop.run_in_executor(None, self._sync_reset_all_statuses)
+
+    def _sync_reset_all_statuses(self) -> int:
+        conn = get_temp_db_connection()
+        try:
+            cur = conn.execute('UPDATE Devices SET "devStatus" = \'secure\' WHERE "devStatus" != \'secure\'')
+            # Reset presence to 0 — first scan will set devices online if reachable
+            conn.execute('UPDATE Devices SET "devPresentLastScan" = 0')
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
     # ── 安全事件 ─────────────────────────────────────────────────
 
     async def record_security_event(
@@ -249,6 +265,21 @@ class NXBridge:
             conn.close()
 
     # ── 设备事件 ─────────────────────────────────────────────────
+
+    async def clear_security_events(self):
+        """Delete all rows from security_events table. Returns count deleted."""
+        loop = self._get_loop()
+        return await loop.run_in_executor(None, self._sync_clear_security_events)
+
+    def _sync_clear_security_events(self):
+        conn = get_temp_db_connection()
+        try:
+            count = conn.execute("SELECT COUNT(*) as cnt FROM security_events").fetchone()["cnt"]
+            conn.execute("DELETE FROM security_events")
+            conn.commit()
+            return count
+        finally:
+            conn.close()
 
     async def record_device_event(self, mac: str, ip: str, event_type: str, details: str = ""):
         loop = self._get_loop()
@@ -385,7 +416,7 @@ class NXBridge:
                 conn.close()
                 return 0
 
-            wf_path = _Path("config/workflows.json")
+            wf_path = _Path(__file__).resolve().parent.parent.parent / "config" / "workflows.json"
             if not wf_path.exists():
                 conn.execute('UPDATE AppEvents SET appEventProcessed = 1')
                 conn.commit()

@@ -21,6 +21,17 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 logger = logging.getLogger(__name__)
 
 
+@router.get("/mode")
+async def get_system_mode():
+    """返回当前系统模式（演示/实战）"""
+    from ..services.topology_service import is_mock_mode
+    mock = is_mock_mode()
+    return {
+        "mock_mode": mock,
+        "mode_label": "演示模式" if mock else "实战模式",
+    }
+
+
 # ── DB-backed alerts (primary) ────────────────────────────────────
 
 @router.get("/db/alerts")
@@ -36,7 +47,7 @@ async def get_db_alerts(
         severity=severity or None,
         source_type=source_type or None,
     )
-    total = await bridge.count_security_events()
+    total = await bridge.count_security_events_filtered(severity=severity or None, source_type=source_type or None)
     return {
         "alerts": events,
         "total": total,
@@ -67,14 +78,65 @@ async def get_db_devices():
 
 # ── Unified Alert List (in-memory + DB) ──────────────────────────
 
+@router.delete("/alerts/clear")
+async def clear_alerts():
+    """Clear all in-memory alert buffers and DB security events."""
+    cleared = 0
+    # Clear in-memory deques
+    receiver = get_receiver()
+    _events_attr = 'events' if hasattr(receiver, 'events') else '_events'
+    count = len(getattr(receiver, _events_attr, []))
+    if hasattr(receiver, _events_attr):
+        getattr(receiver, _events_attr).clear()
+    cleared += count
+
+    snmp = get_snmp_service()
+    count = len(snmp._traps) if hasattr(snmp, '_traps') else 0
+    if hasattr(snmp, '_traps'):
+        snmp._traps.clear()
+    cleared += count
+
+    mqtt = get_mqtt_service()
+    count = len(mqtt._messages) if hasattr(mqtt, '_messages') else 0
+    if hasattr(mqtt, '_messages'):
+        mqtt._messages.clear()
+    cleared += count
+
+    suricata = get_suricata_service()
+    count = len(suricata._events) if hasattr(suricata, '_events') else 0
+    if hasattr(suricata, '_events'):
+        suricata._events.clear()
+    cleared += count
+
+    # Clear DB security events
+    try:
+        bridge = get_bridge()
+        db_count = await bridge.clear_security_events()
+        cleared += (db_count or 0)
+    except Exception as e:
+        logger.debug(f"DB clear skipped: {e}")
+
+    return {"status": "ok", "cleared": cleared}
+
+
 @router.get("/alerts")
 async def get_alerts(
     severity: str = "",
+    source_type: str = "",
     limit: int = 100,
     offset: int = 0,
 ):
-    alerts = []
+    """Unified alerts: in-memory (real-time) + DB (scenario & historical).
 
+    In-memory sources (collector, snmp, mqtt, suricata) are consulted first.
+    DB alerts are then merged in to cover scenario demo events and any
+    historical data that isn't in the in-memory deques.  Deduplication
+    uses (source_type, timestamp[:19], message[:80]) as the key so that
+    the same event isn't shown twice when real collectors are active.
+    """
+    alerts: list[dict] = []
+
+    # ── In-memory real-time sources ────────────────────────────────────
     for evt in get_receiver().get_events(limit=500):
         alerts.append({
             "id": evt["id"],
@@ -122,8 +184,41 @@ async def get_alerts(
             "fsm_state": alert.get("fsm_state", ""),
         })
 
+    # ── DB-backed alerts (scenario, historical, etc.) ──────────────────
+    mem_keys: set[str] = set()
+    for a in alerts:
+        key = f"{a['source_type']}|{a['timestamp'][:19]}|{a['message'][:80]}"
+        mem_keys.add(key)
+
+    try:
+        bridge = get_bridge()
+        db_events = await bridge.get_security_events(limit=500)
+        for evt in db_events:
+            st = evt.get("source_type", "unknown")
+            ts = evt.get("timestamp", "")
+            msg = evt.get("message", "")
+            key = f"{st}|{ts[:19]}|{msg[:80]}"
+            if key in mem_keys:
+                continue  # dedup: already in in-memory
+            alerts.append({
+                "id": str(evt.get("index", f"db-{len(alerts)}")),
+                "timestamp": ts,
+                "type": f"{st}_event",
+                "severity": evt.get("severity", "info"),
+                "message": msg,
+                "source": evt.get("source", ""),
+                "target": evt.get("target", ""),
+                "source_type": st,
+                "fsm_state": evt.get("fsm_state", ""),
+            })
+    except Exception as e:
+        logger.debug(f"DB alert merge skipped: {e}")
+
+    # ── Filtering ──────────────────────────────────────────────────────
     if severity:
         alerts = [a for a in alerts if a["severity"] == severity]
+    if source_type:
+        alerts = [a for a in alerts if a.get("source_type") == source_type]
 
     alerts.sort(key=lambda x: x["timestamp"], reverse=True)
 
@@ -139,6 +234,15 @@ async def get_alerts(
 
 @router.get("/trends/alert-count")
 async def get_alert_count_trend(hours: int = 24):
+    # Mock 模式：返回合成趋势数据
+    from ..services.topology_service import is_mock_mode
+    if is_mock_mode():
+        try:
+            from ..services.mock_state_service import get_mock_simulator
+            return await get_mock_simulator().get_simulated_trends(hours)
+        except Exception:
+            pass
+
     bridge = get_bridge()
     db_trend = await bridge.get_alert_counts_by_hour(hours)
     if db_trend:
@@ -217,6 +321,38 @@ async def get_device_status_distribution():
     }
 
 
+def _generate_protocol_fallback() -> dict:
+    """从 topology 设备的 protocols 字段聚合生成协议分布回退数据。"""
+    from collections import Counter
+    topology = get_topology()
+    counts: Counter = Counter()
+    for dev in topology.devices:
+        for p in getattr(dev, "protocols", []) or []:
+            counts[p.lower()] += 1
+
+    # 映射到友好名称并加基础流量
+    mapping = {
+        "http": "HTTP", "https": "HTTPS", "ssh": "SSH", "snmp": "SNMP",
+        "mqtt": "MQTT", "rtsp": "RTSP", "onvif": "ONVIF", "telnet": "Telnet",
+        "modbus-tcp": "Modbus", "opc-ua": "OPC-UA", "s7comm": "S7comm",
+        "profinet": "PROFINET", "bacnet": "BACnet", "isapi": "ISAPI",
+        "tuya-protocol": "Tuya", "ipsec": "IPsec",
+    }
+    result = {}
+    for proto, cnt in counts.items():
+        label = mapping.get(proto, proto.upper())
+        result[label] = max(cnt * 12, 3)  # 每个设备贡献基础流量
+
+    # 基础传输协议保底
+    if "TCP" not in result:
+        result["TCP"] = 45
+    if "UDP" not in result:
+        result["UDP"] = 30
+    if "ICMP" not in result:
+        result["ICMP"] = 5
+    return result
+
+
 @router.get("/trends/protocol-traffic")
 async def get_protocol_traffic():
     stats = get_suricata_service().get_stats()
@@ -224,6 +360,8 @@ async def get_protocol_traffic():
     if not proto:
         scapy = get_suricata_service().get_scapy_stats()
         proto = scapy.get("by_protocol", {})
+    if not proto:
+        proto = _generate_protocol_fallback()
     return {
         "labels": list(proto.keys()),
         "data": list(proto.values()),

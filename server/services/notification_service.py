@@ -8,7 +8,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path("config/notifications.json")
+CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "notifications.json"
 
 
 class NotificationService:
@@ -81,11 +81,19 @@ class NotificationService:
         priority_map = {"critical": "5", "warning": "4", "info": "3"}
         p = priority_map.get(priority, "default")
 
+        # ntfy headers must be ASCII; use message body for full content
+        ascii_title = f"CyberClaw [{priority}]"
+        body = f"{title}\n\n{message}"
+
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"{ch.get('server', 'https://ntfy.sh')}/{ch['topic']}",
-                data=message.encode("utf-8"),
-                headers={"Title": title, "Priority": p},
+                data=body.encode("utf-8"),
+                headers={
+                    "Title": ascii_title,
+                    "Priority": p,
+                    "Tags": priority,
+                },
                 timeout=10,
             )
         logger.info(f"ntfy sent to {ch['topic']}")

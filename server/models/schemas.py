@@ -8,6 +8,7 @@ class DeviceResponse(BaseModel):
     ip: str
     mac: str
     status: str
+    online: bool | None = None
     vendor: str | None = None
     model: str | None = None
     pos: list[float] | None = None

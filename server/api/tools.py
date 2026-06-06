@@ -75,6 +75,9 @@ async def trigger_baseline(body: dict):
 
 @router.post("/isolate")
 async def trigger_isolate(body: dict):
+    import logging
+    logger = logging.getLogger(__name__)
+
     device_id = body.get("device_id", "")
     device_ip = body.get("device_ip", "")
 
@@ -83,38 +86,62 @@ async def trigger_isolate(body: dict):
         device_id = get_device_id_by_ip(device_ip)
 
     if not device_id:
-        return JSONResponse({"error": "device not found"}, status_code=404)
+        return JSONResponse({"error": "device not found", "device_ip": device_ip}, status_code=404)
 
     dev = get_device(device_id)
     container = dev.name if dev else ""
     target_ip = device_ip or (dev.ip if dev else "")
 
-    # Try MCP tool first, fallback to direct isolation service
-    mcp_ok = False
+    if not target_ip:
+        return JSONResponse({"error": "cannot determine device IP"}, status_code=400)
+
+    # Collect isolation result from either MCP or direct service
+    isolation_result = {}
+
+    # Try MCP tool first
     try:
         from ..services.mcp_tool_service import call_tool
         result = await call_tool(
             "auto-response", "isolate_device",
             device_ip=target_ip, reason="security_event",
         )
-        parsed = result.get("result") if isinstance(result, dict) else result
-        if isinstance(parsed, str):
-            import json as _json
-            try:
-                parsed = _json.loads(parsed)
-            except (_json.JSONDecodeError, TypeError):
-                pass
-        # MCP returned a meaningful result
-        if parsed and not (isinstance(parsed, dict) and parsed.get("error")):
-            mcp_ok = True
-    except Exception:
-        pass  # MCP unavailable — fall through to direct isolation
+        isolation_result = result
+    except Exception as e:
+        logger.warning(f"MCP isolate failed: {e}")
 
-    if not mcp_ok:
-        iso_svc = get_isolation_service()
-        iso_result = await iso_svc.isolate(target_ip)
-        if iso_result.get("status") in ("isolated", "already_isolated", "recorded"):
-            mcp_ok = True
+    # Fallback to direct IsolationService if MCP didn't isolate
+    status = isolation_result.get("status", "") if isinstance(isolation_result, dict) else ""
+    if status not in ("isolated", "already_isolated", "recorded"):
+        try:
+            iso_svc = get_isolation_service()
+            iso_result = await iso_svc.isolate(target_ip)
+            isolation_result.update(iso_result)
+        except Exception as e:
+            logger.warning(f"Direct isolate failed: {e}")
+            isolation_result.setdefault("status", "error")
+            isolation_result.setdefault("detail", str(e))
+
+    # ── Docker container stop (most reliable method in lab env) ───
+    docker_stopped = False
+    if container:
+        import subprocess
+        for wsl_flag in [["wsl", "-d", "Ubuntu-20.04", "-e"], []]:
+            try:
+                r = subprocess.run(
+                    wsl_flag + ["docker", "stop", container],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if r.returncode == 0:
+                    docker_stopped = True
+                    isolation_result["docker"] = "stopped"
+                    isolation_result.setdefault("status", "isolated")
+                    logger.info(f"Docker container {container} stopped")
+                    break
+            except Exception as e:
+                logger.debug(f"Docker stop via {'wsl' if wsl_flag else 'direct'} failed: {e}")
+    if not docker_stopped and container:
+        isolation_result.setdefault("status", isolation_result.get("status", "recorded"))
+        isolation_result.setdefault("detail", "Docker stop failed, status recorded only")
 
     # Update device status and record security event via nx_bridge
     if dev and dev.mac:
@@ -130,16 +157,33 @@ async def trigger_isolate(body: dict):
                 target_mac=dev.mac,
                 fsm_state="isolated",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"DB update failed: {e}")
+
+    # ── Broadcast device_isolated directly (do NOT re-call MCP) ──
+    # Previously used run_tool_and_broadcast which called MCP again —
+    # that second call would fail since device is already isolated,
+    # and the error path never sends device_isolated, so HUD got no feedback.
+    from datetime import datetime
+    from ..services.tool_broadcast_service import _broadcast
+    await _broadcast({
+        "type": "device_isolated",
+        "target": device_id,
+        "source": "cyberagent",
+        "severity": "high",
+        "message": f"Device {device_id} ({target_ip}) isolated",
+        "timestamp": datetime.now().isoformat(),
+    })
 
     tid = _task_id()
-    asyncio.create_task(run_tool_and_broadcast(
-        "auto-response", "isolate_device",
-        {"device_ip": target_ip, "reason": "security_event"},
-        device_id,
-    ))
-    return {"task_id": tid, "status": "started", "container": container}
+    return {
+        "task_id": tid,
+        "status": "isolated",
+        "device": device_id,
+        "ip": target_ip,
+        "container": container,
+        "isolation": isolation_result,
+    }
 
 
 # ── Collector endpoints ──────────────────────────────────────────
@@ -181,6 +225,9 @@ async def get_collector_status():
 
 @router.post("/restore")
 async def trigger_restore(body: dict):
+    import logging
+    logger = logging.getLogger(__name__)
+
     device_id = body.get("device_id", "")
     device_ip = body.get("device_ip", "")
 
@@ -194,31 +241,53 @@ async def trigger_restore(body: dict):
     dev = get_device(device_id)
     target_ip = device_ip or (dev.ip if dev else "")
 
-    # Try MCP tool first, fallback to direct isolation service
-    mcp_ok = False
+    if not target_ip:
+        return JSONResponse({"error": "cannot determine device IP"}, status_code=400)
+
+    restore_result = {}
+
+    # Try MCP tool first
     try:
         from ..services.mcp_tool_service import call_tool
         result = await call_tool(
             "auto-response", "restore_device",
             device_ip=target_ip,
         )
-        parsed = result.get("result") if isinstance(result, dict) else result
-        if isinstance(parsed, str):
-            import json as _json
-            try:
-                parsed = _json.loads(parsed)
-            except (_json.JSONDecodeError, TypeError):
-                pass
-        if parsed and not (isinstance(parsed, dict) and parsed.get("error")):
-            mcp_ok = True
-    except Exception:
-        pass
+        restore_result = result
+    except Exception as e:
+        logger.warning(f"MCP restore failed: {e}")
 
-    if not mcp_ok:
-        iso_svc = get_isolation_service()
-        restore_result = await iso_svc.restore(target_ip)
-        if restore_result.get("status") in ("restored", "not_isolated", "recorded"):
-            mcp_ok = True
+    # Fallback to direct service
+    status = restore_result.get("status", "") if isinstance(restore_result, dict) else ""
+    if status not in ("restored", "not_isolated", "recorded"):
+        try:
+            iso_svc = get_isolation_service()
+            iso_result = await iso_svc.restore(target_ip)
+            restore_result.update(iso_result)
+        except Exception as e:
+            logger.warning(f"Direct restore failed: {e}")
+            restore_result.setdefault("status", "error")
+            restore_result.setdefault("detail", str(e))
+
+    # ── Docker container start (restore in lab env) ───────────────
+    container = dev.name if dev else ""
+    docker_started = False
+    if container:
+        import subprocess
+        for wsl_flag in [["wsl", "-d", "Ubuntu-20.04", "-e"], []]:
+            try:
+                r = subprocess.run(
+                    wsl_flag + ["docker", "start", container],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if r.returncode == 0:
+                    docker_started = True
+                    restore_result["docker"] = "started"
+                    restore_result.setdefault("status", "restored")
+                    logger.info(f"Docker container {container} started")
+                    break
+            except Exception as e:
+                logger.debug(f"Docker start via {'wsl' if wsl_flag else 'direct'} failed: {e}")
 
     # Update device status and record security event via nx_bridge
     if dev and dev.mac:
@@ -234,16 +303,24 @@ async def trigger_restore(body: dict):
                 target_mac=dev.mac,
                 fsm_state="secure",
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"DB update failed: {e}")
             pass
 
+    # ── Broadcast threat_resolved directly ──
+    from datetime import datetime
+    from ..services.tool_broadcast_service import _broadcast
+    await _broadcast({
+        "type": "threat_resolved",
+        "target": device_id,
+        "source": "cyberagent",
+        "severity": "info",
+        "message": f"Device {device_id} ({target_ip}) restored to secure",
+        "timestamp": datetime.now().isoformat(),
+    })
+
     tid = _task_id()
-    asyncio.create_task(run_tool_and_broadcast(
-        "auto-response", "restore_device",
-        {"device_ip": target_ip},
-        device_id,
-    ))
-    return {"task_id": tid, "status": "started"}
+    return {"task_id": tid, "status": "restored"}
 
 
 # ── SNMP endpoints ───────────────────────────────────────────────

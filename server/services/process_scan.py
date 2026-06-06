@@ -283,21 +283,17 @@ def _sync_update_presence() -> list[dict]:
     Devices in CurrentScan -> present=1.
     Devices NOT in CurrentScan (previously present) -> present=0 + "Device Down" event.
     Devices NOT in CurrentScan (previously absent, now in CurrentScan) -> present=1 + "Connected" event.
+
+    IMPORTANT: Detect down/reconnected devices BEFORE updating presence values,
+    so the queries see the prior scan's presence state.
     """
     events = []
     conn = get_temp_db_connection()
     try:
         now = timeNowUTC()
 
-        # Mark devices seen in CurrentScan as present
-        conn.execute("""
-            UPDATE Devices SET devPresentLastScan = 1
-            WHERE EXISTS (
-                SELECT 1 FROM CurrentScan cs WHERE cs.scanMac = Devices.devMac
-            )
-        """)
-
-        # Find devices going DOWN (were present, not in current scan)
+        # Step 1: Find devices going DOWN (were present, not in current scan)
+        # Must run BEFORE any presence updates so we see the old values.
         down_rows = conn.execute("""
             SELECT devMac, devLastIP
             FROM Devices
@@ -307,6 +303,34 @@ def _sync_update_presence() -> list[dict]:
               )
         """).fetchall()
 
+        # Step 2: Find devices coming BACK (were absent, now in current scan)
+        # Must run BEFORE any presence updates so we see the old values.
+        reconnect_rows = conn.execute("""
+            SELECT cs.scanMac, cs.scanLastIP
+            FROM CurrentScan cs
+            INNER JOIN Devices d ON d.devMac = cs.scanMac
+            WHERE d.devPresentLastScan = 0
+              OR d.devPresentLastScan IS NULL
+        """).fetchall()
+
+        # Step 3: NOW update presence values
+        # Mark devices seen in CurrentScan as present
+        conn.execute("""
+            UPDATE Devices SET devPresentLastScan = 1
+            WHERE EXISTS (
+                SELECT 1 FROM CurrentScan cs WHERE cs.scanMac = Devices.devMac
+            )
+        """)
+
+        # Mark devices NOT in CurrentScan as absent
+        conn.execute("""
+            UPDATE Devices SET devPresentLastScan = 0
+            WHERE NOT EXISTS (
+                SELECT 1 FROM CurrentScan cs WHERE cs.scanMac = Devices.devMac
+            )
+        """)
+
+        # Step 4: Emit events for down devices
         for row in down_rows:
             mac = row["devMac"]
             ip = row["devLastIP"] or ""
@@ -324,24 +348,7 @@ def _sync_update_presence() -> list[dict]:
                 "timestamp": now,
             })
 
-        # Now mark them as absent
-        conn.execute("""
-            UPDATE Devices SET devPresentLastScan = 0
-            WHERE NOT EXISTS (
-                SELECT 1 FROM CurrentScan cs WHERE cs.scanMac = Devices.devMac
-            )
-        """)
-
-        # Find devices coming BACK (were absent, now in current scan)
-        # We use the events table to detect reconnections
-        reconnect_rows = conn.execute("""
-            SELECT cs.scanMac, cs.scanLastIP
-            FROM CurrentScan cs
-            INNER JOIN Devices d ON d.devMac = cs.scanMac
-            WHERE d.devPresentLastScan = 0
-              OR d.devPresentLastScan IS NULL
-        """).fetchall()
-
+        # Step 5: Emit events for reconnected devices
         for row in reconnect_rows:
             mac = row["scanMac"]
             ip = row["scanLastIP"] or ""
@@ -543,7 +550,77 @@ async def process_scan_results() -> list[dict]:
     await clear_current_scan()
 
     mylog("info", f"[ProcessScan] Pipeline complete: {len(all_events)} events generated")
+
+    # Stage 7: Trigger notifications (NetAlertX: post-scan notification)
+    await _notify_scan_events(all_events)
+
     return all_events
+
+
+# ---------------------------------------------------------------------------
+# Stage 7: Notify via NotificationBridge
+# ---------------------------------------------------------------------------
+
+async def _notify_scan_events(events: list[dict]):
+    """Fire notification bridge calls for scan events.
+
+    NetAlertX pattern: after process_scan, check pending events and publish.
+    Each event type maps to a NotificationBridge handler.
+    """
+    if not events:
+        return
+    try:
+        from .notification_bridge import get_notification_bridge
+        bridge = get_notification_bridge()
+    except Exception:
+        return
+
+    for evt in events:
+        try:
+            evt_type = evt.get("type", "")
+            mac = evt.get("mac", "")
+            ip = evt.get("ip", "")
+
+            # Build a minimal device dict for the bridge
+            device = {"devMac": mac, "devLastIP": ip, "devName": mac}
+
+            if evt_type == "New Device":
+                # Enrich with vendor from DB
+                _enrich_device(device)
+                await bridge.on_new_device_found(device)
+
+            elif evt_type == "Device Down":
+                _enrich_device(device)
+                await bridge.on_device_down(device)
+
+            elif evt_type == "Down Reconnected":
+                _enrich_device(device)
+                await bridge.on_device_status_change(device, "down", "secure")
+
+            elif evt_type == "IP Changed":
+                _enrich_device(device)
+                await bridge.on_device_status_change(device, "secure", "scanning")
+
+        except Exception as e:
+            logger.debug(f"Notify scan event failed: {e}")
+
+
+def _enrich_device(device: dict):
+    """Fill in devName/devVendor from DB if available."""
+    try:
+        conn = get_temp_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT devName, devVendor FROM Devices WHERE devMac=?",
+                (device.get("devMac", ""),)
+            ).fetchone()
+            if row:
+                device.setdefault("devName", row["devName"])
+                device.setdefault("devVendor", row["devVendor"])
+        finally:
+            conn.close()
+    except Exception:
+        pass
 
 
 # Sync wrapper for callers that need it

@@ -1,6 +1,10 @@
 import os
 import re
+import json
+import time as _time
 import logging
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter
@@ -30,12 +34,16 @@ SYSTEM_PROMPT_TEMPLATE = """你是 CyberAgent，CyberClaw 平台的 IoT 安全�
 - 安全事件响应建议（设备隔离、IP 封禁等）
 - 攻击时间线分析和安全复盘
 
-可用工具（MCP 服务器）：
+可用工具（MCP 服务器，共 12 个）：
 - nmap-scan: 网络扫描与 IoT 指纹识别
 - device-config: 设备配置管理 (SSH/gNMI)
+- simulation: GNS3 网络仿真与拓扑管理
+- syslog-collector: Syslog 消息接收与查询
+- snmp-collector: SNMP Trap 接收与查询
 - cve-intel: CVE 漏洞情报查询
 - security-baseline: CIS 安全基线审计
 - traffic-analyzer: 流量分析与 IoC 提取
+- flow-analyzer: IPFIX/NetFlow 流量记录分析
 - auto-response: 自动响应 (端口隔离/ACL)
 - config-audit: 配置审计与 ACL 冲突检测
 - attack-timeline: 攻击时间线与根因分析
@@ -52,12 +60,33 @@ SYSTEM_PROMPT_TEMPLATE = """你是 CyberAgent，CyberClaw 平台的 IoT 安全�
 3. 直接基于工具返回的数据进行分析。如果工具返回了设备列表、漏洞信息、审计结果等，就分析这些数据；如果工具失败了，就解释失败原因和可能的解决办法。
 4. 回答要简洁、聚焦、有针对性。禁止列举泛泛的"操作步骤"或"建议使用XX工具"。
 5. 不要假装有数据。如果工具结果为空或失败，就说"未能获取到数据"并解释原因。
+6. 【严重性准确性】如实反映数据的严重性级别。如果CVE的CVSS分数为0或数据标记为"LOW"，就说"低风险"，禁止使用"高危"、"严重"、"立即隔离"等夸张措辞。建议措施应与实际严重性匹配：低危→观察监控，中危→计划修复，高危→优先修复，严重→立即处理。
+7. 【数据优先于描述】即使CVE的文字描述听起来很严重（如"缓冲区溢出"、"远程代码执行"），也必须以CVSS分数和严重性标记为准。CVSS 0 = 低危，不要因为描述可怕就夸大风险。
+8. 【设备恢复】当用户要求"恢复"、"解除隔离"、"解封"设备时，告知用户可以在HUD界面点击设备的RESTORE按钮来恢复，或者提供设备IP让用户确认后执行恢复操作。get_response_status工具会自动同步数据库中的实际设备状态，如果设备已恢复，会显示0个活跃隔离动作。
+9. 【隔离确认卡片】当用户明确要求隔离设备，且工具结果中包含设备信息时，你必须：
+   a) 列出所有匹配的设备（IP、名称、类型）
+   b) 在回复末尾直接输出确认卡片 HTML（不要用代码块包裹，不要加```html标记，直接写HTML标签）。
+   每台设备一张卡片，HTML格式如下（将IP和设备名替换为实际值）：
+
+   <div class="confirm-card">
+   <div class="confirm-title">⚠️ 隔离确认</div>
+   <div class="confirm-details">
+   <div>目标设备: 192.168.10.5 (Hikvision-IPC)</div>
+   <div>原因: 用户请求隔离</div>
+   </div>
+   <button class="confirm-btn" data-action="confirm">✓ 确认隔离</button>
+   <button class="confirm-btn" data-action="cancel">✗ 取消</button>
+   </div>
+
+   如果用户说"隔离所有XX设备"，则为每台匹配设备生成一张卡片。
+   重要：HTML必须直接出现在回复中，不要用markdown代码块包裹。
 使用简洁中文回复，可使用 markdown 格式。回答要有专业性和可操作性。"""
 
 
 async def _build_system_prompt() -> str:
     try:
         from ..services.nx_bridge import get_bridge
+        from ..services.topology_service import is_mock_mode
         bridge = get_bridge()
         devices = await bridge.get_all_devices()
         counts = await bridge.get_device_counts_by_status()
@@ -71,17 +100,41 @@ async def _build_system_prompt() -> str:
         device_summary = "、".join(f"{t}×{c}" for t, c in sorted(types.items(), key=lambda x: -x[1])[:5])
         status_summary = "、".join(f"{s}×{c}" for s, c in counts.items() if c > 0)
 
-        return SYSTEM_PROMPT_TEMPLATE.format(
+        prompt = SYSTEM_PROMPT_TEMPLATE.format(
             device_count=device_count,
             device_summary=device_summary or "未知",
             status_summary=status_summary or "全部安全",
             event_count=event_count,
         )
+
+        # Mock 模式提示
+        if is_mock_mode():
+            prompt += '\n\n【重要】当前系统处于 **演示模式（Mock/Demo）**。所有设备为模拟的视频监控系统设备，工具返回的数据为演示数据。请在回答中适当提示用户当前为演示模式，例如首次回答时标注「当前为演示模式」。工具结果的解读应正常进行，但需标注数据来源为「演示数据」而非「真实数据」。'
+
+        return prompt
     except Exception:
         return SYSTEM_PROMPT_TEMPLATE.format(
             device_count=15, device_summary="摄像头、传感器、网关",
             status_summary="全部安全", event_count=0,
         )
+
+
+def _strip_code_blocks_around_html(text: str) -> str:
+    """Remove ```html / ``` code block markers around confirm-card HTML.
+
+    LLMs tend to wrap interactive HTML in markdown code blocks, which
+    prevents the frontend from rendering actual buttons. This function
+    detects and strips those markers using a simple two-pass approach.
+    """
+    if "confirm-card" not in text:
+        return text
+    import re
+    # Pass 1: remove opening ```html\n or ```\n that precedes confirm-card content
+    text = re.sub(r"```(?:html|HTML)?\s*\n(?=.*confirm-card)", "", text)
+    # Pass 2: remove closing ``` that follows confirm-card content
+    text = re.sub(r"(?<=</div>)\s*\n\s*```", "\n", text)
+    return text
+
 
 # ── Tool result → steps ────────────────────────────────────────
 
@@ -175,6 +228,22 @@ def _summarize_tool(tool_key: str, result: dict) -> str | None:
         n = result["active_actions"]
         return f"响应状态 — {n} 个活跃操作"
 
+    # Syslog results
+    if "messages" in result and tool_key.startswith("syslog"):
+        n = result.get("total", len(result.get("messages", [])))
+        return f"Syslog 查询 — {n} 条日志记录"
+
+    # SNMP Trap results
+    if "traps" in result and tool_key.startswith("snmp"):
+        n = result.get("total", len(result.get("traps", [])))
+        return f"SNMP Trap 查询 — {n} 条 Trap 记录"
+
+    # Flow results
+    if "flows" in result and tool_key.startswith("flow"):
+        n = result.get("total", len(result.get("flows", [])))
+        return f"流量记录查询 — {n} 条 Flow 记录"
+
+    # Generic status check
     if "status" in result:
         s = result["status"]
         if s in ("started", "running"):
@@ -182,7 +251,190 @@ def _summarize_tool(tool_key: str, result: dict) -> str | None:
         if s == "completed":
             return f"{tool_key.split('/')[-1]} — 执行完成"
 
+    # Device config results
+    if tool_key.startswith("device-config"):
+        if "output" in result:
+            return "设备配置 — 配置获取成功"
+        if "targets" in result:
+            return f"设备管理 — {len(result['targets'])} 个目标设备"
+
+    # Simulation results
+    if tool_key.startswith("simulation"):
+        if "projects" in result:
+            return f"GNS3 仿真 — {len(result['projects'])} 个项目"
+
     return None
+
+
+# ── Timer intent parsing ────────────────────────────────────────
+
+_CN_NUMS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+           "半": 0.5, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5,
+           "6": 6, "7": 7, "8": 8, "9": 9, "10": 10,
+           "15": 15, "20": 20, "30": 30, "45": 45, "60": 60}
+
+_TIMER_PATTERN = re.compile(
+    r"([一二两三四五六七八九十半\d]+)\s*(分钟|小时|秒钟|秒|分|min|minute|hour|sec|second)[后以后]"
+    r"|定时|schedule|later|after|delay|推迟",
+    re.IGNORECASE,
+)
+
+_SPECIFIC_TIME_PATTERN = re.compile(
+    r"(明天|后天|大后天)?\s*"
+    r"(早上|上午|下午|晚上|夜里|凌晨)?\s*"
+    r"(\d{1,2})[点时:：](\d{1,2})?\s*分?钟?\s*"
+    r"(.*?)(?:执行|运行|扫描|检查|分析|开始)?$",
+    re.IGNORECASE,
+)
+
+
+def _parse_timer_intent(message: str) -> dict | None:
+    """Parse timer intent from user message. Returns dict or None."""
+    # Try specific time pattern first (明天9点, 下午3点半, etc.)
+    sm = _SPECIFIC_TIME_PATTERN.search(message)
+    if sm:
+        offset_day = {"明天": 1, "后天": 2, "大后天": 3}.get(sm.group(1) or "", 0)
+        hour = int(sm.group(3))
+        minute = int(sm.group(4)) if sm.group(4) else 0
+
+        period = (sm.group(2) or "").lower()
+        if period in ("下午", "晚上", "夜里") and hour < 12:
+            hour += 12
+        elif period == "凌晨" and hour == 12:
+            hour = 0
+
+        now = datetime.now(timezone.utc).astimezone()
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        target += timedelta(days=offset_day)
+        if target <= now and offset_day == 0:
+            target += timedelta(days=1)  # if time already passed today, tomorrow
+
+        delay = (target - now).total_seconds()
+        if 0 < delay <= 86400 * 7:
+            return {"delay_seconds": int(delay), "original_message": message}
+
+    # Then try relative time pattern (5分钟后, etc.)
+    m = _TIMER_PATTERN.search(message)
+    if not m:
+        return None
+
+    delay_seconds = 60
+    num_str = m.group(1)
+    unit_str = m.group(2)
+    if num_str and unit_str:
+        amount = _CN_NUMS.get(num_str)
+        if amount is None:
+            try:
+                amount = int(num_str)
+            except ValueError:
+                amount = 1
+        unit = unit_str.lower()
+        if unit in ("分钟", "分", "min", "minute"):
+            delay_seconds = int(amount * 60)
+        elif unit in ("小时", "hour"):
+            delay_seconds = int(amount * 3600)
+        elif unit in ("秒钟", "秒", "sec", "second"):
+            delay_seconds = int(amount)
+    elif not num_str:
+        delay_seconds = 300
+
+    delay_seconds = min(delay_seconds, 86400)
+    return {"delay_seconds": delay_seconds, "original_message": message}
+
+
+async def _handle_timer_intent(req: ChatRequest, timer: dict) -> ChatResponse:
+    """Handle a timer intent — schedule delayed execution and respond immediately."""
+    import asyncio as _asyncio
+
+    delay = timer["delay_seconds"]
+    msg = timer["original_message"]
+
+    # Schedule the actual execution in the background
+    async def _delayed_execute():
+        try:
+            logger.info(f"Timer: sleeping {delay}s before executing: {msg}")
+            await _asyncio.sleep(delay)
+            logger.info(f"Timer: executing intent for: {msg}")
+            tool_results = await execute_intent(msg)
+            logger.info(f"Timer: got {len(tool_results)} results")
+
+            # Store results for chat history polling
+            summary_parts = []
+            for r in tool_results:
+                result = r.get("result", {})
+                if isinstance(result, dict) and "error" not in result:
+                    tool_name = f"{r['server']}/{r['tool']}"
+                    summary_parts.append(_format_timer_summary(tool_name, result))
+
+            timer_reply = "\n".join(summary_parts) if summary_parts else "定时任务执行完毕，未获取到有效结果。"
+
+            # Save to chat history so user can see it
+            _chat_history.append({"role": "assistant", "content": f"⏰ 定时任务结果（{msg}）：\n\n{timer_reply}"})
+            _save_chat_history()
+
+            # Send through notification bridge (persists to DB + webhook/ntfy + WebSocket)
+            try:
+                from ..services.notification_bridge import get_notification_bridge
+                bridge = get_notification_bridge()
+                await bridge.on_timer_result(msg, timer_reply)
+            except Exception as e:
+                logger.warning(f"Timer notification bridge failed: {e}")
+
+        except Exception as e:
+            logger.error(f"Delayed execution failed: {e}")
+            _chat_history.append({"role": "assistant", "content": f"⏰ 定时任务失败：{e}"})
+            _save_chat_history()
+
+    # Keep a strong reference so the task isn't garbage collected
+    try:
+        task = _asyncio.create_task(_delayed_execute())
+        _scheduled_timer_tasks.add(task)
+
+        # Register with scheduler for unified frontend view
+        timer_id = f"timer_{int(_time.time())}_{id(task) % 10000}"
+        try:
+            from ..services.security_scheduler import get_security_scheduler
+            _sched = get_security_scheduler()
+            _sched.register_timer_task(timer_id, msg, delay, _time.time(), task)
+            task.add_done_callback(lambda t, tid=timer_id: (
+                _scheduled_timer_tasks.discard(t),
+                _sched.unregister_timer_task(tid),
+                logger.info(f"Timer task done, remaining: {len(_scheduled_timer_tasks)}")
+            ))
+        except Exception:
+            task.add_done_callback(lambda t: (
+                _scheduled_timer_tasks.discard(t),
+                logger.info(f"Timer task done, remaining: {len(_scheduled_timer_tasks)}")
+            ))
+
+        logger.info(f"Timer task created: {task.get_name()}, total active: {len(_scheduled_timer_tasks)}")
+    except RuntimeError as e:
+        logger.error(f"Failed to create timer task: {e}")
+
+    # Format delay for display
+    if delay >= 3600:
+        delay_str = f"{delay // 3600} 小时"
+    elif delay >= 60:
+        delay_str = f"{delay // 60} 分钟"
+    else:
+        delay_str = f"{delay} 秒"
+
+    reply = (
+        f"已设定定时任务，将在 **{delay_str}后** 自动执行安全分析。\n\n"
+        f"任务内容：{msg}\n\n"
+        f"执行完毕后结果将自动显示在此对话中。"
+    )
+
+    _chat_history.append({"role": "user", "content": req.message})
+    _chat_history.append({"role": "assistant", "content": reply})
+    _save_chat_history()
+
+    return ChatResponse(
+        reply=reply,
+        steps=[AnalysisStep(tool="scheduler/timer", summary=f"定时任务已设定 — {delay_str}后执行")],
+        tool_results=[],
+    )
 
 
 async def call_glm_api(messages: list[dict]) -> str:
@@ -201,11 +453,61 @@ async def call_glm_api(messages: list[dict]) -> str:
         return data["choices"][0]["message"]["content"]
 
 
-_chat_history: list[dict] = []
+_CHAT_HISTORY_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "chat_history.json"
+_MAX_HISTORY = 500  # keep last 500 messages
+
+
+def _load_chat_history() -> list[dict]:
+    if _CHAT_HISTORY_PATH.exists():
+        try:
+            return json.loads(_CHAT_HISTORY_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def _save_chat_history():
+    try:
+        _CHAT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CHAT_HISTORY_PATH.write_text(
+            json.dumps(_chat_history[-_MAX_HISTORY:], ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.debug(f"Save chat history failed: {e}")
+
+
+_chat_history: list[dict] = _load_chat_history()
+_scheduled_timer_tasks: set = set()
+
+
+def _format_timer_summary(tool_name: str, result: dict) -> str:
+    """Format a tool result into a short summary for timer notification."""
+    if "hosts_found" in result:
+        return f"**网络扫描**: 发现 {result['hosts_found']} 台设备"
+    if "total_cves" in result:
+        n = result["total_cves"]
+        cves = result.get("cves", [])
+        max_cvss = max((c.get("cvss_v3") or 0 for c in cves), default=0)
+        return f"**CVE 查询**: 匹配 {n} 个漏洞，最高 CVSS {max_cvss}"
+    if "devices_audited" in result:
+        return f"**基线检查**: {result['devices_audited']} 台设备，评分 {result.get('overall_score', 'N/A')}%"
+    if "iocs_found" in result:
+        return f"**IoC 提取**: 发现 {result['iocs_found']} 个指标"
+    if "total_findings" in result:
+        return f"**配置审计**: {result['total_findings']} 个问题"
+    if "messages" in result and "total" in result:
+        return f"**{tool_name}**: {result['total']} 条记录"
+    return f"**{tool_name}**: 执行完成"
 
 
 @router.post("")
 async def chat(req: ChatRequest) -> ChatResponse:
+    # Check for timer/schedule intent before executing tools
+    timer_result = _parse_timer_intent(req.message)
+    if timer_result:
+        return await _handle_timer_intent(req, timer_result)
+
     # Execute MCP tools based on intent
     tool_results = []
     try:
@@ -233,6 +535,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
         try:
             reply = await call_glm_api(messages)
+            # LLM often wraps confirm-card HTML in ```html``` code blocks.
+            # Strip them so the frontend renders actual buttons, not code text.
+            reply = _strip_code_blocks_around_html(reply)
         except Exception as e:
             logger.error(f"GLM API error: {e}")
             reply = _format_tool_fallback(tool_results) or f"AI 服务暂时不可用: {e}"
@@ -248,6 +553,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     _chat_history.append({"role": "user", "content": req.message})
     _chat_history.append({"role": "assistant", "content": reply})
+    _save_chat_history()
 
     # Serialize tool_results for frontend
     serialized_results = []
@@ -295,6 +601,12 @@ def _format_tool_fallback(tool_results: list[dict]) -> str | None:
                 parts.append(f"**配置审计**: {result['total_findings']} 个安全问题")
             elif "active_actions" in result:
                 parts.append(f"**响应状态**: {result['active_actions']} 个活跃操作")
+            elif "messages" in result and r['server'] == "syslog-collector":
+                parts.append(f"**Syslog 日志**: {result.get('total', len(result.get('messages', [])))} 条记录")
+            elif "traps" in result and r['server'] == "snmp-collector":
+                parts.append(f"**SNMP Trap**: {result.get('total', len(result.get('traps', [])))} 条记录")
+            elif "flows" in result and r['server'] == "flow-analyzer":
+                parts.append(f"**流量记录**: {result.get('total', len(result.get('flows', [])))} 条记录")
 
     return "\n\n".join(parts) if parts else None
 
@@ -304,14 +616,23 @@ async def chat_history():
     return {"history": _chat_history}
 
 
+@router.delete("/history")
+async def clear_chat_history():
+    _chat_history.clear()
+    _save_chat_history()
+    return {"status": "cleared"}
+
+
 @router.get("/status")
 async def chat_status():
+    from ..services.topology_service import is_mock_mode
     tools = get_available_tools()
     return {
         "llm_connected": bool(GLM_API_KEY),
         "model": GLM_MODEL if GLM_API_KEY else "mock",
         "mcp_tools_loaded": len(tools),
         "mcp_tools": tools,
+        "mock_mode": is_mock_mode(),
     }
 
 

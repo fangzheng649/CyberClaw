@@ -192,6 +192,13 @@ class SuricataMonitor:
                 "stats": self.get_stats(),
             }))
 
+        # Send notification for intrusion alerts
+        try:
+            from .notification_bridge import get_notification_bridge
+            asyncio.create_task(get_notification_bridge().on_intrusion_detected(evt.to_dict()))
+        except Exception:
+            pass
+
         # Persist to database
         try:
             from .nx_bridge import get_bridge

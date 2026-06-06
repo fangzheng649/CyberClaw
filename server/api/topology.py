@@ -1,13 +1,13 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from ..services.topology_service import get_topology, get_device
+from ..services.topology_service import get_topology, async_get_topology, get_device
 
 router = APIRouter(prefix="/api", tags=["topology"])
 
 
 @router.get("/topology")
 async def topology():
-    return get_topology().model_dump()
+    return (await async_get_topology()).model_dump()
 
 
 @router.get("/topology/devices/{device_id}")

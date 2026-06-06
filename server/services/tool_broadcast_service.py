@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from .topology_service import get_device_by_ip, get_device_id_by_ip
+from .topology_service import get_device_by_ip, get_device_id_by_ip, get_mac_by_device_id
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,13 @@ async def _handle_network_scan(data: dict, _target: str | None):
         try:
             from .nx_bridge import get_bridge
             for d in devices:
-                await get_bridge().upsert_device(d["device_id"], {
+                # d["device_id"] is a topology ID (e.g. "switch-core"),
+                # NOT a MAC address. Look up the real MAC before upserting.
+                real_mac = get_mac_by_device_id(d["device_id"])
+                if not real_mac:
+                    logger.warning(f"Skipping upsert for {d['device_id']}: no MAC found")
+                    continue
+                await get_bridge().upsert_device(real_mac, {
                     "devLastIP": d["ip"],
                     "devVendor": d.get("vendor", ""),
                     "devOpenPorts": json.dumps(d.get("ports", [])),

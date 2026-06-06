@@ -16,8 +16,9 @@ def set_scenario_service(svc: ScenarioService) -> None:
 
 
 @router.get("")
+@router.get("/")
 async def scenario_list():
-    return {"scenarios": [{"id": "mirai", "name": "Mirai Botnet Attack", "steps": 15}]}
+    return {"scenarios": [{"id": "mirai", "name": "Mirai Botnet Attack", "steps": 25}]}
 
 
 @router.get("/status")

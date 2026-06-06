@@ -8,7 +8,7 @@ from ..services.nx_bridge import get_bridge
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
-WORKFLOWS_PATH = Path("config/workflows.json")
+WORKFLOWS_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "workflows.json"
 
 
 @router.get("/")

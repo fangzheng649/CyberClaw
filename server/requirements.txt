@@ -9,3 +9,4 @@ scapy>=2.5.0
 pysnmp>=5.1.0
 paho-mqtt>=2.0.0
 netmiko>=4.2.0
+croniter>=2.0.0

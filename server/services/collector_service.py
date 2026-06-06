@@ -163,6 +163,19 @@ class SyslogReceiver:
             except Exception:
                 pass  # DB not available — continue without persistence
 
+            # Send notification for security events
+            if event.severity in ("critical", "emergency", "alert", "error"):
+                try:
+                    from .notification_bridge import get_notification_bridge
+                    asyncio.create_task(get_notification_bridge().on_security_event({
+                        "severity": event.severity,
+                        "message": event.message,
+                        "source_ip": addr[0] if addr else "",
+                        "hostname": event.hostname,
+                    }))
+                except Exception:
+                    pass
+
         except Exception as e:
             self._stats["errors"] += 1
             logger.error(f"Error processing syslog from {addr}: {e}")

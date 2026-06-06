@@ -71,6 +71,7 @@ class ScanService:
         }
 
     async def _loop(self, subnet: str, interval: int):
+        first = True
         while self._running:
             try:
                 result = await self.scan_subnet(subnet)
@@ -78,9 +79,60 @@ class ScanService:
                 self._stats["devices_found"] = result.get("found", 0)
                 from datetime import datetime
                 self._stats["last_scan"] = datetime.now().isoformat()
+                if first:
+                    logger.info(f"Initial scan complete: found {result.get('found', 0)} devices")
+                    first = False
+                # After each scan, check if mode should switch
+                await self._check_mode_switch()
             except Exception as e:
                 logger.error(f"Scan cycle error: {e}")
             await asyncio.sleep(interval)
+
+    async def _check_mode_switch(self):
+        """Check if system should switch between mock and real mode."""
+        try:
+            from .nx_bridge import get_bridge
+            from .topology_service import set_mock_mode, is_mock_mode, _config_cache
+            from server.db.compat import get_temp_db_connection
+
+            bridge = get_bridge()
+            db_devices = await bridge.get_all_devices()
+            if not db_devices:
+                return
+
+            any_online = any(
+                d.get("devPresentLastScan", 0) for d in db_devices
+                if isinstance(d, dict) and d.get("devDiscoveryMethod") != "mock"
+            )
+            currently_mock = is_mock_mode()
+
+            if any_online and currently_mock:
+                # Real device came online → switch to real mode
+                logger.info("Real device detected — switching from MOCK to REAL mode")
+                set_mock_mode(False)
+                # Re-seed with real devices
+                conn = get_temp_db_connection()
+                conn.execute("DELETE FROM Devices")
+                conn.commit()
+                conn.close()
+                from server.services.db.seed_service import seed_from_config
+                await seed_from_config()
+
+            elif not any_online and not currently_mock:
+                # All devices went offline → switch to mock mode
+                logger.info("All devices offline — switching from REAL to MOCK mode")
+                set_mock_mode(True)
+                conn = get_temp_db_connection()
+                conn.execute("DELETE FROM Devices")
+                conn.execute("DELETE FROM Events")
+                conn.execute("DELETE FROM security_events")
+                conn.commit()
+                conn.close()
+                from server.services.db.seed_service import seed_from_config
+                await seed_from_config()
+
+        except Exception as e:
+            logger.debug(f"Mode switch check failed: {e}")
 
     async def scan_subnet(self, subnet: str) -> dict:
         """执行一次 ARP + ICMP 扫描"""
