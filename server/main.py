@@ -69,12 +69,11 @@ async def _detect_and_set_mode(bridge):
 
         # Re-seed DB with mock devices
         try:
-            # Clear existing devices
+            # Clear devices for re-seeding, but keep security_events (historical data)
             from server.db.compat import get_temp_db_connection
             conn = get_temp_db_connection()
             conn.execute("DELETE FROM Devices")
             conn.execute("DELETE FROM Events")
-            conn.execute("DELETE FROM security_events")
             conn.commit()
             conn.close()
 

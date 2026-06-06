@@ -22,11 +22,11 @@ _TARGET_RATIOS = {
 
 # 状态转换概率矩阵（当前状态 → 新状态的权重）
 _TRANSITION_WEIGHTS = {
-    "secure":     {"secure": 92, "scanning": 8},
-    "scanning":   {"secure": 40, "scanning": 30, "vulnerable": 30},
-    "vulnerable": {"secure": 50, "vulnerable": 30, "attacked": 15, "isolated": 5},
-    "attacked":   {"attacked": 70, "isolated": 20, "secure": 10},
-    "isolated":   {"isolated": 80, "secure": 20},
+    "secure":     {"secure": 75, "scanning": 25},
+    "scanning":   {"secure": 30, "scanning": 30, "vulnerable": 40},
+    "vulnerable": {"secure": 30, "vulnerable": 30, "attacked": 30, "isolated": 10},
+    "attacked":   {"attacked": 50, "isolated": 30, "secure": 20},
+    "isolated":   {"isolated": 60, "secure": 40},
 }
 
 # 合成事件模板
@@ -67,6 +67,8 @@ class MockStateSimulator:
             return
         self._running = True
         self._generate_initial_trends()
+        # 启动时立即注入初始状态变化，确保 Dashboard 有即时数据
+        await self._initial_kick()
         self._task = asyncio.create_task(self._loop())
         logger.info("Mock state simulator started")
 
@@ -77,11 +79,51 @@ class MockStateSimulator:
             self._task = None
         logger.info("Mock state simulator stopped")
 
+    async def _initial_kick(self):
+        """启动时强制改变 3-5 台设备状态并生成事件，确保 Dashboard 即时有数据。"""
+        try:
+            from .nx_bridge import get_bridge
+            bridge = get_bridge()
+            devices = await bridge.get_all_devices()
+            if not devices:
+                return
+            candidates = [d for d in devices if isinstance(d, dict) and d.get("devMac")]
+            if not candidates:
+                return
+
+            # 强制将 3-5 台设备设置为非 secure 状态
+            kick_count = random.randint(3, 5)
+            targets = random.sample(candidates, min(kick_count, len(candidates)))
+            kick_statuses = ["scanning", "scanning", "vulnerable", "vulnerable", "attacked"]
+
+            for dev, status in zip(targets, kick_statuses):
+                mac = dev["devMac"]
+                name = dev.get("devName", mac)
+                await bridge.update_device_status(mac, status)
+                await self._generate_event(bridge, dev, status)
+                logger.info(f"Mock initial kick: {name} → {status}")
+
+            # 广播初始状态
+            if self._broadcast_callback:
+                updated = await bridge.get_all_devices()
+                stats = {}
+                for d in (updated or []):
+                    if isinstance(d, dict):
+                        s = d.get("devStatus", "secure")
+                        stats[s] = stats.get(s, 0) + 1
+                await self._broadcast_callback({
+                    "type": "mock_state_update",
+                    "stats": stats,
+                    "devices_count": len(updated or []),
+                })
+        except Exception as e:
+            logger.warning(f"Mock initial kick failed: {e}")
+
     async def _loop(self):
-        """每 30-60 秒随机改变 1-2 台设备状态"""
+        """每 15-30 秒随机改变 1-2 台设备状态"""
         try:
             while self._running:
-                await asyncio.sleep(random.randint(30, 60))
+                await asyncio.sleep(random.randint(15, 30))
                 await self._simulation_cycle()
         except asyncio.CancelledError:
             pass
@@ -176,14 +218,14 @@ class MockStateSimulator:
 
         try:
             await bridge.record_security_event(
-                source="mock_simulator",
+                source_type="mock_simulator",
                 severity=severity,
-                message=f"[Mock] {message}",
+                message=message,
                 target=name,
                 fsm_state=new_status,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to record mock event: {e}")
 
     # ── 趋势数据 — 基于 DB security_events 动态聚合 ──────────────
 
