@@ -346,9 +346,9 @@ class NXBridge:
         conn = get_temp_db_connection()
         try:
             rows = conn.execute(
-                """SELECT strftime('%Y-%m-%d %H:00', timestamp) as hour, severity, COUNT(*) as count
+                """SELECT strftime('%Y-%m-%d %H:00', timestamp, '+8 hours') as hour, severity, COUNT(*) as count
                    FROM security_events
-                   WHERE timestamp >= datetime('now', 'localtime', ?)
+                   WHERE timestamp >= datetime('now', ?)
                    GROUP BY hour, severity ORDER BY hour""",
                 (f"-{hours} hours",),
             ).fetchall()
@@ -357,7 +357,7 @@ class NXBridge:
             conn.close()
 
     async def get_alert_counts_by_minute(self, minutes: int = 60):
-        """按 5 分钟粒度聚合事件数。"""
+        """按分钟粒度聚合事件数。"""
         loop = self._get_loop()
         return await loop.run_in_executor(None, lambda: self._sync_get_alert_counts_by_minute(minutes))
 
@@ -365,9 +365,9 @@ class NXBridge:
         conn = get_temp_db_connection()
         try:
             rows = conn.execute(
-                """SELECT strftime('%Y-%m-%d %H:%M', timestamp) as hour, severity, COUNT(*) as count
+                """SELECT strftime('%Y-%m-%d %H:%M', timestamp, '+8 hours') as hour, severity, COUNT(*) as count
                    FROM security_events
-                   WHERE timestamp >= datetime('now', 'localtime', ?)
+                   WHERE timestamp >= datetime('now', ?)
                    GROUP BY hour, severity ORDER BY hour""",
                 (f"-{minutes} minutes",),
             ).fetchall()
@@ -383,7 +383,7 @@ class NXBridge:
         conn = get_temp_db_connection()
         try:
             row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM security_events WHERE timestamp >= datetime('now', 'localtime', ?)",
+                "SELECT COUNT(*) as cnt FROM security_events WHERE timestamp >= datetime('now', ?)",
                 (f"-{hours} hours",),
             ).fetchone()
             return row["cnt"] if row else 0
