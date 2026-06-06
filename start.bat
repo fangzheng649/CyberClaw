@@ -30,7 +30,7 @@ if not exist "%ROOT_DIR%\.env" (
     if exist "%ROOT_DIR%\.env.example" (
         copy "%ROOT_DIR%\.env.example" "%ROOT_DIR%\.env" >nul
         echo  [CONFIG] .env created from .env.example
-        echo  Please edit .env and fill in GLM_API_KEY
+        echo  Please edit .env and fill in DEEPSEEK_API_KEY
         notepad "%ROOT_DIR%\.env"
         pause
         exit /b 0

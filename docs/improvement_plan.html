@@ -575,7 +575,7 @@
 
   <div class="solution-card">
     <span class="label">改进方案</span>
-    利用已有的 GLM-4 API，构建三层 AI 分析能力：<strong>事件分类 → 事件关联 → 报告生成</strong>。将 chat 从工具入口改为安全分析助手。
+    利用已有的 DeepSeek API，构建三层 AI 分析能力：<strong>事件分类 → 事件关联 → 报告生成</strong>。将 chat 从工具入口改为安全分析助手。
   </div>
 
   <div class="arch-diagram">
@@ -611,7 +611,7 @@
 
   <h3 style="margin: 24px 0 12px; font-size: 1.1em;">实施步骤</h3>
   <ol class="steps">
-    <li><strong>事件分类服务</strong>：<code>server/services/ai_analyzer.py</code> — 收到 syslog/snmp trap/suricata alert 后，自动调用 GLM-4 判断严重度和攻击类型</li>
+    <li><strong>事件分类服务</strong>：<code>server/services/ai_analyzer.py</code> — 收到 syslog/snmp trap/suricata alert 后，自动调用 DeepSeek 判断严重度和攻击类型</li>
     <li><strong>事件关联引擎</strong>：跨设备、跨协议关联多个告警，还原攻击链。例如：端口扫描(A) → 暴力破解(B) → 异常登录(C) 三条告警关联为一次攻击</li>
     <li><strong>Chat 改造</strong>：<code>POST /api/ai/analyze</code> 和 <code>POST /api/ai/correlate</code> — 输入"最近一小时有什么异常"→ 返回 AI 分析结果而非工具列表</li>
     <li><strong>报告生成</strong>：<code>POST /api/ai/report</code> — 每日/每周自动生成安全态势报告（Markdown 格式）</li>

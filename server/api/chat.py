@@ -18,10 +18,10 @@ from ..services.mcp_tool_service import (
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
 
-GLM_API_KEY = os.getenv("GLM_API_KEY", "")
-GLM_MODEL = os.getenv("GLM_MODEL", "glm-4-flash")
-GLM_API_URL = os.getenv(
-    "GLM_API_URL", "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_API_URL = os.getenv(
+    "DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions"
 )
 
 SYSTEM_PROMPT_TEMPLATE = """你是 CyberAgent，CyberClaw 平台的 IoT 安全分析 AI 助手。
@@ -433,17 +433,17 @@ async def _handle_timer_intent(req: ChatRequest, timer: dict) -> ChatResponse:
     )
 
 
-async def call_glm_api(messages: list[dict]) -> str:
+async def call_deepseek_api(messages: list[dict]) -> str:
     headers = {
-        "Authorization": f"Bearer {GLM_API_KEY}",
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": GLM_MODEL,
+        "model": DEEPSEEK_MODEL,
         "messages": messages,
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(GLM_API_URL, headers=headers, json=payload)
+        response = await client.post(DEEPSEEK_API_URL, headers=headers, json=payload)
         response.raise_for_status()
         data = response.json()
         return data["choices"][0]["message"]["content"]
@@ -517,7 +517,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     # Build tool context for LLM
     tool_context = format_tool_results_for_llm(tool_results)
 
-    if GLM_API_KEY:
+    if DEEPSEEK_API_KEY:
         system_prompt = await _build_system_prompt()
         messages = [{"role": "system", "content": system_prompt}]
         for msg in req.history:
@@ -530,12 +530,12 @@ async def chat(req: ChatRequest) -> ChatResponse:
         messages.append({"role": "user", "content": user_content})
 
         try:
-            reply = await call_glm_api(messages)
+            reply = await call_deepseek_api(messages)
             # LLM often wraps confirm-card HTML in ```html``` code blocks.
             # Strip them so the frontend renders actual buttons, not code text.
             reply = _strip_code_blocks_around_html(reply)
         except Exception as e:
-            logger.error(f"GLM API error: {e}")
+            logger.error(f"DeepSeek API error: {e}")
             reply = _format_tool_fallback(tool_results) or f"AI 服务暂时不可用: {e}"
     else:
         reply = _format_tool_fallback(tool_results) or (
@@ -567,7 +567,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
 
 def _format_tool_fallback(tool_results: list[dict]) -> str | None:
-    """Format tool results as a readable response when GLM is unavailable."""
+    """Format tool results as a readable response when DeepSeek is unavailable."""
     if not tool_results:
         return None
 
@@ -624,8 +624,8 @@ async def chat_status():
     from ..services.topology_service import is_mock_mode
     tools = get_available_tools()
     return {
-        "llm_connected": bool(GLM_API_KEY),
-        "model": GLM_MODEL if GLM_API_KEY else "mock",
+        "llm_connected": bool(DEEPSEEK_API_KEY),
+        "model": DEEPSEEK_MODEL if DEEPSEEK_API_KEY else "mock",
         "mcp_tools_loaded": len(tools),
         "mcp_tools": tools,
         "mock_mode": is_mock_mode(),

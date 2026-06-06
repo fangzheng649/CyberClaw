@@ -10,17 +10,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 # 设置测试环境变量（必须在 import app 之前）
 os.environ["SCAN_SUBNET"] = ""  # 禁用自动扫描
-os.environ["GLM_API_KEY"] = ""  # 禁用 LLM 调用
+os.environ["DEEPSEEK_API_KEY"] = ""  # 禁用 LLM 调用
 os.environ["ISOLATION_METHOD"] = "record_only"  # 隔离操作仅记录
 
 import sqlite3
 from httpx import AsyncClient, ASGITransport
 from server.main import app
 
-# 强制清空 GLM_API_KEY 模块级变量（如果模块已经加载）
+# 强制清空 DEEPSEEK_API_KEY 模块级变量（如果模块已经加载）
 try:
     import server.api.chat as _chat_mod
-    _chat_mod.GLM_API_KEY = ""
+    _chat_mod.DEEPSEEK_API_KEY = ""
 except Exception:
     pass
 
