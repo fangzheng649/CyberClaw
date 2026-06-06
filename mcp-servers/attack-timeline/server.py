@@ -69,7 +69,8 @@ def _load_from_main_db(incident_id: str = "") -> list[dict]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT rowid as id, source_type, severity, message, "
-            "source, target, target_mac, fsm_state, timestamp "
+            "source, target, target_mac, fsm_state, "
+            "strftime('%Y-%m-%d %H:%M:%S', timestamp, '+8 hours') as timestamp "
             "FROM security_events ORDER BY rowid ASC"
         ).fetchall()
         conn.close()
