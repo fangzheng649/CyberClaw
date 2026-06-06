@@ -1,9 +1,7 @@
 {
   "channels": {
     "webhook": {
-      "enabled": true,
-      "url": "",
-      "secret": ""
+      "enabled": false
     },
     "ntfy": {
       "enabled": true,
@@ -13,24 +11,16 @@
   },
   "rules": [
     {
-      "name": "严重安全事件",
-      "severity": [
-        "critical"
-      ],
-      "channels": [
-        "webhook",
-        "ntfy"
-      ]
+      "severity": ["critical", "high"],
+      "channels": ["ntfy"]
     },
     {
-      "name": "高危事件",
-      "severity": [
-        "warning",
-        "high"
-      ],
-      "channels": [
-        "webhook"
-      ]
+      "severity": ["warning"],
+      "channels": ["ntfy"]
+    },
+    {
+      "severity": ["info"],
+      "channels": ["ntfy"]
     }
   ]
 }

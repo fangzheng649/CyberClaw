@@ -1,0 +1,48 @@
+{
+  "network": {
+    "name": "CyberClaw 智能园区视频监控安全实验室",
+    "subnet": "192.168.10.0/24",
+    "description": "模拟智能园区视频监控系统 — 19 台设备 + 1 攻击源"
+  },
+  "devices": [
+    {"id": "attacker", "name": "Attacker-Host", "type": "attacker", "ip": "10.0.1.100", "mac": "aa:bb:cc:00:00:01", "vendor": "Kali", "model": "Linux 6.1", "pos": [-18, 0, 0], "role": "attacker", "expected_ports": [], "protocols": [], "notes": "外部攻击源"},
+    {"id": "usg_firewall", "name": "USG6507E-Firewall", "type": "gateway", "ip": "192.168.10.1", "mac": "00:18:82:e4:f5:01", "vendor": "Huawei", "model": "USG6507E", "pos": [-10, 0, 0], "role": "infrastructure", "expected_ports": [22, 443, 8443], "protocols": ["ssh", "https", "ipsec"], "firmware_version": "V600R006C10"},
+    {"id": "core_switch", "name": "CoreSwitch-S5735", "type": "switch", "ip": "192.168.10.2", "mac": "3c:8c:40:a1:b2:02", "vendor": "Huawei", "model": "S5735-L48T4X", "pos": [-2, 0, 0], "role": "infrastructure", "expected_ports": [22, 80, 161], "protocols": ["ssh", "snmp", "lldp"], "firmware_version": "V200R021C10"},
+    {"id": "nvr_main", "name": "NVR-DS-9632N", "type": "server", "ip": "192.168.10.10", "mac": "44:19:b6:3a:4c:10", "vendor": "Hikvision", "model": "DS-9632N-I16", "pos": [4, 0, -5], "role": "service", "switch_port": "Port 1", "expected_ports": [80, 443, 554, 8000], "protocols": ["http", "rtsp", "onvif", "isapi"], "firmware_version": "V4.1.60"},
+    {"id": "secu_platform", "name": "iSecure-Center", "type": "server", "ip": "192.168.10.11", "mac": "44:19:b6:3a:4c:11", "vendor": "Hikvision", "model": "iSecure Center 2.3", "pos": [4, 0, -1.7], "role": "service", "switch_port": "Port 2", "expected_ports": [443, 8080], "protocols": ["https", "isapi"], "firmware_version": "V2.3.200"},
+    {"id": "video_analytics", "name": "Video-Analytics-AI", "type": "server", "ip": "192.168.10.12", "mac": "44:19:b6:3a:4c:12", "vendor": "Dahua", "model": "DHI-IVS-VMS", "pos": [4, 0, 1.7], "role": "service", "switch_port": "Port 3", "expected_ports": [80, 8080, 37777], "protocols": ["http", "grpc", "mqtt"], "firmware_version": "V4.0.2"},
+    {"id": "storage_server", "name": "NAS-VideoStore", "type": "server", "ip": "192.168.10.13", "mac": "00:11:32:ff:dd:13", "vendor": "Synology", "model": "RS3621xs+", "pos": [4, 0, 5], "role": "service", "switch_port": "Port 4", "expected_ports": [22, 443, 445, 5000, 5001], "protocols": ["nfs", "smb", "https"], "firmware_version": "DSM 7.2.1"},
+    {"id": "access_switch_a", "name": "AggSwitch-A-S5130", "type": "switch", "ip": "192.168.10.20", "mac": "3c:8c:40:a1:b2:20", "vendor": "H3C", "model": "S5130-28S-EI", "pos": [10, 0, -4], "role": "infrastructure", "expected_ports": [22, 161], "protocols": ["ssh", "snmp"], "firmware_version": "R3115"},
+    {"id": "access_switch_b", "name": "AggSwitch-B-S5130", "type": "switch", "ip": "192.168.10.21", "mac": "3c:8c:40:a1:b2:21", "vendor": "H3C", "model": "S5130-28S-EI", "pos": [10, 0, 4], "role": "infrastructure", "expected_ports": [22, 161], "protocols": ["ssh", "snmp"], "firmware_version": "R3115"},
+    {"id": "cam_entrance", "name": "IPC-Entrance-PTZ", "type": "camera", "ip": "192.168.10.101", "mac": "44:19:b6:3a:4c:21", "vendor": "Hikvision", "model": "DS-2DE4425IW", "pos": [16, 0, -9], "role": "target", "switch_port": "Gi1/0/1", "expected_ports": [80, 554, 8000], "protocols": ["http", "rtsp", "onvif"], "firmware_version": "V5.7.16"},
+    {"id": "cam_parking", "name": "IPC-Parking", "type": "camera", "ip": "192.168.10.102", "mac": "44:19:b6:3a:4c:22", "vendor": "Hikvision", "model": "DS-2CD2T86FWD", "pos": [16, 0, -6], "role": "target", "switch_port": "Gi1/0/2", "expected_ports": [80, 554, 8000], "protocols": ["http", "rtsp", "onvif"], "firmware_version": "V5.7.12"},
+    {"id": "cam_lobby", "name": "IPC-Lobby-Dome", "type": "camera", "ip": "192.168.10.103", "mac": "a0:bd:1d:ff:ee:23", "vendor": "Dahua", "model": "IPC-HDBW5442E", "pos": [16, 0, -3], "role": "target", "switch_port": "Gi1/0/3", "expected_ports": [80, 554, 37777], "protocols": ["http", "rtsp", "onvif"], "firmware_version": "V2.820.0000"},
+    {"id": "cam_elevator", "name": "IPC-Elevator", "type": "camera", "ip": "192.168.10.104", "mac": "44:19:b6:3a:4c:24", "vendor": "Hikvision", "model": "DS-2CD6412FWD", "pos": [16, 0, 0], "role": "target", "switch_port": "Gi1/0/4", "expected_ports": [80, 554], "protocols": ["http", "rtsp"], "firmware_version": "V5.4.51"},
+    {"id": "cam_corridor", "name": "IPC-Corridor-B2", "type": "camera", "ip": "192.168.10.105", "mac": "a0:bd:1d:ff:ee:25", "vendor": "Dahua", "model": "IPC-HFW2831E-S", "pos": [16, 0, 3], "role": "target", "switch_port": "Gi1/0/5", "expected_ports": [80, 554, 37777], "protocols": ["http", "rtsp", "onvif"], "firmware_version": "V2.800.0000"},
+    {"id": "cam_server_room", "name": "IPC-ServerRoom", "type": "camera", "ip": "192.168.10.106", "mac": "44:19:b6:3a:4c:26", "vendor": "Hikvision", "model": "DS-2CD2142FWD-I", "pos": [16, 0, 6], "role": "target", "switch_port": "Gi1/0/6", "expected_ports": [80, 443, 554], "protocols": ["http", "rtsp", "onvif"], "firmware_version": "V5.6.22"},
+    {"id": "cam_rooftop", "name": "IPC-Rooftop-Thermal", "type": "camera", "ip": "192.168.10.107", "mac": "44:19:b6:3a:4c:27", "vendor": "Hikvision", "model": "DS-2TD2617B", "pos": [16, 0, 9], "role": "target", "switch_port": "Gi1/0/7", "expected_ports": [80, 554, 8000], "protocols": ["http", "rtsp", "onvif"], "firmware_version": "V7.1.4"},
+    {"id": "access_ctrl_main", "name": "AccessCtrl-Main", "type": "access", "ip": "192.168.10.110", "mac": "54:e4:bd:f1:a2:30", "vendor": "Hikvision", "model": "DS-K1T671M", "pos": [16, 0, -12], "role": "target", "switch_port": "Gi1/0/8", "expected_ports": [80, 443], "protocols": ["http", "https", "isapi"], "firmware_version": "V1.2.3"},
+    {"id": "access_ctrl_gate", "name": "AccessCtrl-Gate", "type": "access", "ip": "192.168.10.111", "mac": "54:e4:bd:f1:a2:31", "vendor": "Hikvision", "model": "DS-K4H250D", "pos": [16, 0, 12], "role": "target", "switch_port": "Gi2/0/1", "expected_ports": [80], "protocols": ["http", "isapi"], "firmware_version": "V1.1.0"},
+    {"id": "cyberclaw_console", "name": "CyberClaw-Console", "type": "pc", "ip": "192.168.10.200", "mac": "f0:de:f1:22:33:00", "vendor": "Lenovo", "model": "ThinkCentre M920", "pos": [4, 0, 9], "role": "service", "switch_port": "Port 5", "expected_ports": [8000], "protocols": ["http"], "notes": "CyberClaw 安全管理平台"}
+  ],
+  "links": [
+    {"from": "attacker", "to": "usg_firewall"},
+    {"from": "usg_firewall", "to": "core_switch"},
+    {"from": "core_switch", "to": "nvr_main"},
+    {"from": "core_switch", "to": "secu_platform"},
+    {"from": "core_switch", "to": "video_analytics"},
+    {"from": "core_switch", "to": "storage_server"},
+    {"from": "core_switch", "to": "access_switch_a"},
+    {"from": "core_switch", "to": "access_switch_b"},
+    {"from": "core_switch", "to": "cyberclaw_console"},
+    {"from": "access_switch_a", "to": "cam_entrance"},
+    {"from": "access_switch_a", "to": "cam_parking"},
+    {"from": "access_switch_a", "to": "cam_lobby"},
+    {"from": "access_switch_a", "to": "cam_elevator"},
+    {"from": "access_switch_b", "to": "cam_corridor"},
+    {"from": "access_switch_b", "to": "cam_server_room"},
+    {"from": "access_switch_b", "to": "cam_rooftop"},
+    {"from": "access_switch_b", "to": "access_ctrl_main"},
+    {"from": "access_switch_b", "to": "access_ctrl_gate"}
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "enabled": true,
+  "tasks": [
+    {
+      "id": "network_scan",
+      "name": "网络扫描",
+      "type": "preset",
+      "tool_server": "nmap-scan",
+      "tool_name": "host_discovery",
+      "tool_args": {
+        "target": "auto"
+      },
+      "prompt": "",
+      "schedule_mode": "interval",
+      "interval_seconds": 300,
+      "cron_expr": null,
+      "run_at": null,
+      "enabled": true,
+      "paused": false,
+      "notify_on": [
+        "new_device",
+        "device_down"
+      ],
+      "last_run_ts": 1780703891.3063214,
+      "run_count": 257
+    },
+    {
+      "id": "cve_check",
+      "name": "CVE 漏洞检查",
+      "type": "preset",
+      "tool_server": "cve-intel",
+      "tool_name": "check_device_vulns",
+      "tool_args": {
+        "vendor": "Hikvision",
+        "min_severity": "HIGH"
+      },
+      "prompt": "",
+      "schedule_mode": "interval",
+      "interval_seconds": 3600,
+      "cron_expr": null,
+      "run_at": null,
+      "enabled": true,
+      "paused": false,
+      "notify_on": [
+        "new_vulnerability"
+      ],
+      "last_run_ts": 1780701684.364619,
+      "run_count": 35
+    },
+    {
+      "id": "baseline_check",
+      "name": "安全基线检查",
+      "type": "preset",
+      "tool_server": "security-baseline",
+      "tool_name": "check_baseline",
+      "tool_args": {
+        "detailed": true
+      },
+      "prompt": "",
+      "schedule_mode": "interval",
+      "interval_seconds": 1800,
+      "cron_expr": null,
+      "run_at": null,
+      "enabled": true,
+      "paused": false,
+      "notify_on": [
+        "score_drop"
+      ],
+      "last_run_ts": 1780703468.1385636,
+      "run_count": 51
+    },
+    {
+      "id": "traffic_analysis",
+      "name": "流量分析",
+      "type": "preset",
+      "tool_server": "traffic-analyzer",
+      "tool_name": "extract_ioc",
+      "tool_args": {},
+      "prompt": "",
+      "schedule_mode": "interval",
+      "interval_seconds": 600,
+      "cron_expr": null,
+      "run_at": null,
+      "enabled": true,
+      "paused": false,
+      "notify_on": [
+        "ioc_found"
+      ],
+      "last_run_ts": 1780704069.2939243,
+      "run_count": 129
+    },
+    {
+      "id": "config_audit",
+      "name": "配置审计",
+      "type": "preset",
+      "tool_server": "config-audit",
+      "tool_name": "audit_config",
+      "tool_args": {},
+      "prompt": "",
+      "schedule_mode": "interval",
+      "interval_seconds": 3600,
+      "cron_expr": null,
+      "run_at": null,
+      "enabled": true,
+      "paused": false,
+      "notify_on": [
+        "misconfiguration"
+      ],
+      "last_run_ts": 1780701672.7132072,
+      "run_count": 40
+    }
+  ]
+}

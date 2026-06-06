@@ -1,16 +1,20 @@
 [
   {
-    "enabled": true
+    "name": "test",
+    "enabled": "No",
+    "trigger": {},
+    "conditions": [],
+    "actions": []
   },
   {
-    "enabled": true
+    "enabled": false
   },
   {
     "name": "漏洞设备标记",
     "enabled": "Yes",
     "trigger": {
-      "object_type": "Devices",
-      "event_type": "update"
+      "object_type": "alert",
+      "event_type": "status_change"
     },
     "conditions": [
       {
@@ -21,14 +25,18 @@
             "operator": "equals",
             "value": "vulnerable"
           }
-        ]
+        ],
+        "field": "devStatus",
+        "operator": "equals",
+        "value": ""
       }
     ],
     "actions": [
       {
-        "type": "update_field",
+        "type": "isolate",
         "field": "devAlertDown",
-        "value": "1"
+        "value": "1",
+        "target": ""
       }
     ]
   }
