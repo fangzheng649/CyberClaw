@@ -8,11 +8,15 @@ Python 3.10+ / FastAPI / FastMCP / Pydantic 2 / Express + Vite / Three.js / WebS
 
 ## Commands (Windows)
 ```bash
+# 一键启动（双击 start.bat 或命令行运行）
+start.bat
+
+# 手动分终端启动（调试用）
 pip install -r server/requirements.txt && cd src/cyberclaw_core && pip install -e .   # install
-python -m uvicorn server.main:app --reload --port 8000                                # backend
-cd ui/cyberclaw-hud && npm run dev                                                     # frontend
+python -m uvicorn server.main:app --reload --port 8000                                # backend (终端1)
+cd ui/cyberclaw-hud && npm run dev                                                     # frontend (终端2)
 ```
-Do NOT use `bash scripts/start.sh` — it breaks in WSL. Use two terminals instead.
+Do NOT use `bash scripts/start.sh` — it breaks in WSL.
 
 ## Directory Map
 ```
