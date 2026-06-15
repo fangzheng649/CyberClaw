@@ -43,13 +43,10 @@ DEMO_SCRIPT = [
     # ── Phase 8: CyberAgent 分析 ────────────────────────────────────
     {"delay": 4000, "event": {"type": "analysis_complete", "severity": "critical", "message": "CyberAgent 分析完成: Mirai 僵尸网络感染 — 6 台设备受控（含 NVR），置信度 96%", "details": {"threat": "Mirai Botnet", "confidence": 96, "infected": ["cam_entrance", "cam_parking", "cam_lobby", "cam_corridor", "cam_server_room", "nvr_main"]}}},
     # ── Phase 9: 自动隔离响应 ───────────────────────────────────────
-    {"delay": 3000, "event": {"type": "isolation_request", "severity": "warning", "message": "建议立即隔离受感染设备: IPC-Entrance, IPC-Parking, IPC-Lobby, IPC-Corridor, IPC-ServerRoom, NVR", "details": {"targets": ["cam_entrance", "cam_parking", "cam_lobby", "cam_corridor", "cam_server_room", "nvr_main"]}}},
-    {"delay": 3000, "event": {"type": "device_isolated", "target": "cam_entrance", "severity": "info", "message": "IPC-Entrance-PTZ (192.168.10.101) 已隔离 — AggSwitch-A Gi1/0/1 已禁用"}},
-    {"delay": 1500, "event": {"type": "device_isolated", "target": "cam_parking", "severity": "info", "message": "IPC-Parking (192.168.10.102) 已隔离 — AggSwitch-A Gi1/0/2 已禁用"}},
-    {"delay": 1500, "event": {"type": "device_isolated", "target": "cam_lobby", "severity": "info", "message": "IPC-Lobby-Dome (192.168.10.103) 已隔离 — AggSwitch-A Gi1/0/3 已禁用"}},
-    {"delay": 1500, "event": {"type": "device_isolated", "target": "cam_corridor", "severity": "info", "message": "IPC-Corridor-B2 (192.168.10.105) 已隔离 — AggSwitch-B Gi1/0/5 已禁用"}},
-    {"delay": 1500, "event": {"type": "device_isolated", "target": "cam_server_room", "severity": "info", "message": "IPC-ServerRoom (192.168.10.106) 已隔离 — AggSwitch-B Gi1/0/6 已禁用"}},
-    {"delay": 2000, "event": {"type": "device_isolated", "target": "nvr_main", "severity": "info", "message": "NVR-DS-9632N (192.168.10.10) 已隔离 — CoreSwitch Port 1 已禁用"}},
+    # 不再写死隔离事件 — 由 AutoResponseService 事件驱动引擎响应
+    # analysis_complete 事件触发：策略评估 → 置信度 96% ≥ 阈值 → 真实隔离 6 台设备。
+    # 引擎在 _run() 处理 analysis_complete 时生成 response_decision +
+    # device_isolated 事件（含真实 isolation_service 调用与 action_id 审计）。
     # ── Phase 10: 收尾 ──────────────────────────────────────────────
     {"delay": 3000, "event": {"type": "threat_resolved", "severity": "info", "message": "威胁已清除 — Mirai 攻击时间线报告已生成。建议：更新 Hikvision/Dahua 固件、修改默认密码、部署网络分段", "details": {"isolated": ["cam_entrance", "cam_parking", "cam_lobby", "cam_corridor", "cam_server_room", "nvr_main"]}}},
 ]
@@ -183,6 +180,15 @@ class ScenarioService:
                                 dev.get("mac", ""), dev.get("status", "secure"))
                 except Exception:
                     pass
+                # Event-driven auto-response: engine evaluates policy on each event.
+                # On analysis_complete it auto-isolates the infected devices for real
+                # (real isolation_service call + action_id audit). Awaits completion so
+                # the demo's threat_resolved step fires only after isolation finishes.
+                try:
+                    from .auto_response_service import get_auto_response_service
+                    await get_auto_response_service().handle_event(evt, devices=self._devices)
+                except Exception as e:
+                    logger.warning(f"Auto-response handler error: {e}")
             if self._broadcast_callback:
                 await self._broadcast_callback({"type": "scenario_complete", "devices": self._devices})
             # Auto-reset devices to secure after demo completes

@@ -25,6 +25,7 @@ from .services.collector_service import get_receiver
 from .services.snmp_service import get_snmp_service
 from .services.mqtt_service import get_mqtt_service
 from .services.suricata_service import get_suricata_service
+from .services.auto_response_service import get_auto_response_service
 from .services.scan_service import get_scan_service
 from .api.dashboard import router as dashboard_router
 from .api.workflow_router import router as workflow_router
@@ -139,6 +140,9 @@ get_mqtt_service().set_broadcast(broadcast_event)
 
 # Wire Suricata service broadcast
 get_suricata_service().set_broadcast(broadcast_event)
+
+# Wire auto-response engine broadcast (event-driven isolation)
+get_auto_response_service().set_broadcast(broadcast_event)
 
 
 @asynccontextmanager
