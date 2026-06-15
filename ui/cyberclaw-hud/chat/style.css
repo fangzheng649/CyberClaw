@@ -660,6 +660,26 @@ body {
   gap: 2px;
 }
 
+/* Isolation staged progress */
+.iso-progress { gap: 4px; margin-top: 4px; }
+.iso-step {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-family: var(--mono);
+  line-height: 1.4;
+  transition: color 0.3s;
+}
+.iso-step.iso-active { color: var(--accent, #00bbff); }
+.iso-step.iso-done { color: rgba(255,255,255,0.4); }
+.iso-verify {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(0,255,136,0.2);
+  color: #00ff88;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
 .confirm-actions {
   display: flex;
   gap: 8px;
@@ -2297,6 +2317,28 @@ body {
 .baseline-check span { font-weight: 700; min-width: 14px; }
 .check-pass { color: #4caf50; }
 .check-fail { color: #f44336; }
+
+.baseline-summary {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 4px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.baseline-check .bl-sev {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  min-width: auto;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.bl-sev-critical { background: rgba(244,67,54,0.18); color: #f44336; }
+.bl-sev-high { background: rgba(255,152,0,0.18); color: #ff9800; }
+.bl-sev-medium { background: rgba(255,193,7,0.16); color: #ffc107; }
+.bl-sev-low { background: rgba(0,187,255,0.14); color: #00bbff; }
+.baseline-check .bl-title { font-weight: 400; color: rgba(255,255,255,0.82); min-width: 0; flex: 1; }
 
 /* CVE severity badges */
 .cve-id { font-family: var(--mono); font-weight: 600; color: var(--text); }

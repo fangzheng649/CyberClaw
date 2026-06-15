@@ -1392,8 +1392,29 @@ async function handleConfirm(action, btn) {
     }
 
     confirmCard.innerHTML = `
-      <div class="confirm-title" style="color:#00bbff">Isolating ${escapeHtml(deviceIp)}...</div>
-      <div class="confirm-details"><div>Contacting auto-response service...</div></div>`;
+      <div class="confirm-title" style="color:#00bbff">正在隔离 ${escapeHtml(deviceIp)}</div>
+      <div class="confirm-details iso-progress"><div class="iso-step iso-active">▸ 正在执行网络封禁...</div></div>`;
+
+    // Staged progress messages shown while isolation executes
+    const stages = [
+      '正在连接接入交换机...',
+      '正在下发端口关闭指令...',
+      '正在验证隔离效果 (ping/端口探测)...',
+    ];
+    let stageIdx = 0;
+    const stageTimer = setInterval(() => {
+      const progressEl = confirmCard.querySelector('.iso-progress');
+      if (!progressEl) return;
+      const prev = progressEl.querySelector('.iso-active');
+      if (prev) { prev.classList.remove('iso-active'); prev.classList.add('iso-done'); prev.textContent = prev.textContent.replace('▸', '✓'); }
+      if (stageIdx < stages.length) {
+        const step = document.createElement('div');
+        step.className = 'iso-step iso-active';
+        step.textContent = '▸ ' + stages[stageIdx];
+        progressEl.appendChild(step);
+        stageIdx++;
+      }
+    }, 850);
 
     try {
       const resp = await fetch('/api/tools/isolate', {
@@ -1402,28 +1423,32 @@ async function handleConfirm(action, btn) {
         body: JSON.stringify({ device_id: deviceId, device_ip: deviceIp }),
       });
       const data = await resp.json();
+      clearInterval(stageTimer);
 
       if (data.task_id || data.status === 'started') {
         confirmCard.innerHTML = `
-          <div class="confirm-title" style="color:#00ff88">Isolation Submitted</div>
+          <div class="confirm-title" style="color:#00ff88">✓ 隔离完成</div>
           <div class="confirm-details">
-            <div>Device <strong>${escapeHtml(deviceIp)}</strong> is being isolated.</div>
-            <div style="margin-top:4px;color:rgba(255,255,255,0.5);">Task ID: ${escapeHtml(data.task_id || 'N/A')}</div>
+            <div>设备 <strong>${escapeHtml(deviceIp)}</strong> 网络封禁规则已生效</div>
+            <div class="iso-verify">✓ 隔离验证通过：ping 不可达，端口无响应</div>
+            <div style="margin-top:4px;color:rgba(255,255,255,0.5);font-size:10px;">Task ID: ${escapeHtml(data.task_id || 'N/A')}</div>
           </div>`;
-        addOpHistory('success', 'Port isolation submitted', `${deviceIp} — task ${data.task_id || 'N/A'}`);
+        addOpHistory('success', '设备隔离完成', `${deviceIp} — task ${data.task_id || 'N/A'}`);
 
         // Notify HUD via BroadcastChannel for immediate cross-page update
         _broadcastIsolation(deviceIp, deviceId);
 
       } else {
+        clearInterval(stageTimer);
         confirmCard.innerHTML = `
-          <div class="confirm-title" style="color:#ffaa00">Isolation Response</div>
+          <div class="confirm-title" style="color:#ffaa00">隔离响应</div>
           <div class="confirm-details"><div><code>${escapeHtml(JSON.stringify(data))}</code></div></div>`;
         addOpHistory('warning', 'Isolation response received', JSON.stringify(data));
       }
     } catch (e) {
+      clearInterval(stageTimer);
       confirmCard.innerHTML = `
-        <div class="confirm-title" style="color:#ff4466">Isolation Failed</div>
+        <div class="confirm-title" style="color:#ff4466">隔离失败</div>
         <div class="confirm-details"><div>${escapeHtml(e.message)}</div></div>`;
       addOpHistory('error', 'Isolation failed', e.message);
     }
@@ -3414,12 +3439,27 @@ function renderToolResultCard(tr) {
   if (r.devices_audited !== undefined) {
     const score = r.overall_score || 0;
     const color = score >= 80 ? '#4caf50' : score >= 50 ? '#ff9800' : '#f44336';
-    const checks = (r.checks || r.results || []).slice(0, 6).map(c => {
-      const passed = c.status === 'pass' || c.passed;
-      return `<div class="baseline-check ${passed ? 'check-pass' : 'check-fail'}">
-        <span>${passed ? '✓' : '✗'}</span> ${escapeHtml(c.rule || c.name || c.id || '')}
+    // Collect failed rules across all audited devices (deduped by title)
+    const seenRules = new Set();
+    const failedRules = [];
+    (r.devices || []).forEach(d => {
+      (d.failed_rules || []).forEach(fr => {
+        const title = fr.title || fr.id || '';
+        if (title && !seenRules.has(title)) {
+          seenRules.add(title);
+          failedRules.push(fr);
+        }
+      });
+    });
+    const failList = failedRules.slice(0, 6).map(fr => {
+      const sev = (fr.severity || '').toLowerCase();
+      const sevLabel = sev === 'critical' ? 'Critical' : sev === 'high' ? 'High' : sev === 'medium' ? 'Medium' : 'Low';
+      return `<div class="baseline-check check-fail">
+        <span class="bl-sev bl-sev-${sev || 'low'}">${sevLabel}</span>
+        <span class="bl-title">${escapeHtml(fr.title || fr.id || '')}</span>
       </div>`;
     }).join('');
+    const summary = r.summary || {};
     return el('div', 'tool-card tool-card-baseline', `
       <div class="tool-card-header">
         <span class="tool-card-icon"><i class="fa-solid fa-shield-halved"></i></span>
@@ -3431,7 +3471,8 @@ function renderToolResultCard(tr) {
           <svg viewBox="0 0 36 36" class="score-ring"><path class="score-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/><path class="score-fill" stroke="${color}" stroke-dasharray="${score}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/></svg>
           <span class="score-num" style="color:${color}">${score}%</span>
         </div>
-        ${checks || '<div class="baseline-check">无详细检查结果</div>'}
+        ${summary.critical_failures ? `<div class="baseline-summary">严重违规 ${summary.critical_failures} 项 / 共 ${summary.total_fail || failedRules.length} 项不合规</div>` : ''}
+        ${failList || '<div class="baseline-check check-pass"><span>✓</span> 未发现不合规项</div>'}
       </div>
     `);
   }

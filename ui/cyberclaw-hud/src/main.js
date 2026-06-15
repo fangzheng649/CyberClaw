@@ -1534,13 +1534,25 @@ function animate() {
   state.devices.forEach((entry, i) => {
     const bob = Math.sin(t * 0.8 + i * 0.7) * 0.06;
     entry.group.position.y = (entry.payload.pos?.[1] || 0) + bob;
+    const baseX = entry.payload.pos?.[0] || 0;
 
     // Attacked pulse (smooth, not flashy)
     if (entry.status === 'attacked') {
+      entry.group.position.x = baseX;
       const pulse = STATUS_GLOW.attacked + Math.sin(t * 3 + i) * 0.15;
       entry.mat.emissiveIntensity = pulse;
       entry.edgeMat.opacity = 0.75 + Math.sin(t * 3 + i) * 0.15;
       entry.haloMat.opacity = 0.25 + Math.sin(t * 2) * 0.1;
+    }
+
+    // Vulnerable warning oscillation (side-to-side wobble + emissive pulse)
+    else if (entry.status === 'vulnerable') {
+      entry.group.position.x = baseX + Math.sin(t * 2.5 + i * 0.5) * 0.14;
+      entry.mat.emissiveIntensity = STATUS_GLOW.vulnerable + Math.sin(t * 4 + i) * 0.12;
+    }
+
+    else {
+      entry.group.position.x = baseX;
     }
 
     // Scanning rotate
