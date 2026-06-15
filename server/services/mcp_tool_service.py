@@ -534,6 +534,10 @@ INTENT_TOOL_MAP = {
         {"server": "attack-timeline", "tool": "get_timeline", "args": {}},
         {"server": "attack-timeline", "tool": "analyze_root_cause", "args": {}},
     ],
+    r"报告|巡检|总结|生成.*安全|report|review": [
+        {"server": "attack-timeline", "tool": "generate_report", "args": {}},
+        {"server": "attack-timeline", "tool": "analyze_root_cause", "args": {}},
+    ],
     r"流量|traffic|IOC|指标|异常": [
         {"server": "traffic-analyzer", "tool": "extract_ioc", "args": {}},
         {"server": "traffic-analyzer", "tool": "analyze_flow", "args": {}},

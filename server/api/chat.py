@@ -500,6 +500,83 @@ def _format_timer_summary(tool_name: str, result: dict) -> str:
     return f"**{tool_name}**: 执行完成"
 
 
+# ── Security report generation ───────────────────────────────────
+
+_REPORT_DIRECTIVE = """
+
+以上是系统的安全事件统计数据与根因分析结果。请基于这些真实数据生成一份专业的{report_type}，使用 Markdown 格式，必须严格包含以下五个章节：
+
+## 一、事件概述
+- 时间范围、事件总数、严重程度统计、涉及设备清单
+
+## 二、攻击时间线
+- 按时间顺序梳理关键攻击阶段（侦察扫描 → 漏洞利用 → 初始入侵 → 横向扩散 → C2 通信 → 响应处置）
+
+## 三、根因分析
+- 攻击入口、利用的漏洞或薄弱配置、扩散路径、分析置信度
+
+## 四、处置记录
+- 已执行的检测与响应操作（检测发现、设备隔离、封禁等）
+
+## 五、改进建议
+- 按优先级列出 3-5 条可操作的安全加固建议
+
+要求：所有数字、设备名、时间必须严格来自上方统计数据，不得编造；措辞专业客观，不使用"灾难性""极其严重"等夸张用语。"""
+
+
+def _infer_report_type(message: str) -> str:
+    """Infer the report type from the user message."""
+    if "复盘" in message:
+        return "安全复盘报告"
+    if "巡检" in message:
+        return "安全巡检报告"
+    if "合规" in message:
+        return "合规审计报告"
+    return "安全事件报告"
+
+
+def _format_report_context(tool_results: list[dict]) -> str:
+    """Extract report + root-cause data into a clean, focused context for report generation."""
+    report = next((r["result"] for r in tool_results
+                   if r.get("tool") == "generate_report" and isinstance(r.get("result"), dict)), None)
+    root = next((r["result"] for r in tool_results
+                 if r.get("tool") == "analyze_root_cause" and isinstance(r.get("result"), dict)), None)
+    if not report:
+        return format_tool_results_for_llm(tool_results)
+
+    lines = ["[安全报告底层数据]"]
+    ts = report.get("timeline_summary", {})
+    lines.append(f"事件总数: {ts.get('total_events', 0)}")
+    lines.append(f"严重事件: {ts.get('critical_events', 0)}  警告事件: {ts.get('warning_events', 0)}")
+    lines.append(f"时间跨度: {ts.get('first_event', '')} ~ {ts.get('last_event', '')}")
+    sources = [s for s in ts.get("sources", []) if s]
+    targets = [t for t in ts.get("targets", []) if t]
+    if sources:
+        lines.append(f"攻击来源: {', '.join(sources)}")
+    if targets:
+        lines.append(f"受影响设备: {', '.join(targets)}")
+    lines.append(f"严重程度分布: {report.get('severity_distribution', {})}")
+    lines.append(f"事件类型分布: {report.get('event_type_distribution', {})}")
+
+    if root:
+        rc = root.get("root_cause", {})
+        lines.append(f"\n[根因分析] 入口: {rc.get('entry_point', '未知')}")
+        lines.append(f"攻击向量: {rc.get('attack_vector', '')}")
+        lines.append(f"主要目标: {rc.get('primary_target', '')}")
+        lines.append(f"分析置信度: {rc.get('confidence', '')}")
+        chain = root.get("attack_chain", [])
+        if chain:
+            lines.append("攻击链关键节点:")
+            for step in chain[:8]:
+                lines.append(f"  {step}")
+            if len(chain) > 12:
+                lines.append(f"  ...(共 {len(chain)} 步，中间省略)...")
+                for step in chain[-4:]:
+                    lines.append(f"  {step}")
+
+    return "\n".join(lines)
+
+
 @router.post("")
 async def chat(req: ChatRequest) -> ChatResponse:
     # Check for timer/schedule intent before executing tools
@@ -513,6 +590,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     tool_results = []
     tool_context = ""
     react_result = None
+    is_report_request = False
 
     if is_react_intent(req.message):
         try:
@@ -529,8 +607,17 @@ async def chat(req: ChatRequest) -> ChatResponse:
             tool_results = await execute_intent(req.message)
         except Exception as e:
             logger.warning(f"MCP tool execution failed: {e}")
+        # Dedupe overlapping intents (e.g. "攻击报告" matches both attack + report groups)
+        seen = set()
+        tool_results = [r for r in tool_results
+                        if (r.get("server"), r.get("tool")) not in seen
+                        and not seen.add((r.get("server"), r.get("tool")))]
         steps = _build_steps_from_results(tool_results)
-        tool_context = format_tool_results_for_llm(tool_results)
+        is_report_request = any(r.get("tool") == "generate_report" for r in tool_results)
+        if is_report_request:
+            tool_context = _format_report_context(tool_results)
+        else:
+            tool_context = format_tool_results_for_llm(tool_results)
 
     if DEEPSEEK_API_KEY:
         system_prompt = await _build_system_prompt()
@@ -548,6 +635,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 "用 Markdown 格式，包含「威胁判定」「置信度评分」「证据摘要」「建议处置」"
                 "四个部分，措辞与实际证据严格对应，不要夸大严重性。"
             )
+        if is_report_request:
+            user_content += _REPORT_DIRECTIVE.format(report_type=_infer_report_type(req.message))
         messages.append({"role": "user", "content": user_content})
 
         try:
