@@ -56,6 +56,10 @@ class AnalysisStep(BaseModel):
     tool: str
     summary: str
     detail: str | None = None
+    # ReAct reasoning fields (optional — only populated by react_engine)
+    thought: str | None = None
+    round: int | None = None
+    status: str | None = None
 
 
 class ChatMessage(BaseModel):

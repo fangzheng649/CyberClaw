@@ -527,6 +527,114 @@ body {
 
 .expand-link:hover { color: var(--text); }
 
+/* ── ReAct multi-round reasoning cards ────────────────────────── */
+.step.step-react {
+  display: block;
+  padding: 8px 10px;
+  background: rgba(0, 187, 255, 0.04);
+  border: 1px solid rgba(0, 187, 255, 0.15);
+  border-left: 3px solid var(--accent, #00bbff);
+  border-radius: 4px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.step.step-react:hover {
+  border-color: rgba(0, 187, 255, 0.4);
+  box-shadow: 0 0 10px rgba(0, 187, 255, 0.08);
+}
+.step-react-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.step-round {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--accent, #00bbff);
+  background: rgba(0, 187, 255, 0.12);
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.3px;
+}
+.step-react-head .step-tool { color: rgba(255, 255, 255, 0.5); }
+.step-thought {
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.45;
+  padding: 3px 0 4px 22px;
+  border-left: 0;
+}
+.step.step-react .step-summary {
+  display: block;
+  font-size: 10.5px;
+  color: var(--accent, #00bbff);
+  padding-left: 22px;
+  line-height: 1.4;
+}
+
+/* Strategy skip note (low-risk early stop) */
+.step.step-skip {
+  display: block;
+  padding: 6px 10px;
+  background: rgba(100, 116, 139, 0.08);
+  border: 1px dashed rgba(100, 116, 139, 0.4);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  font-style: italic;
+}
+.step.step-skip .step-summary { display: block; color: var(--muted); padding: 0; }
+
+/* Final verdict card — colored by risk level */
+.step.step-verdict {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 5px;
+  margin-top: 4px;
+  animation: verdictIn 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.step-verdict-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.step-verdict-icon { font-size: 14px; }
+.step-verdict-body {
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.92);
+}
+.step-verdict.verdict-critical {
+  background: rgba(255, 34, 68, 0.12);
+  border: 1px solid rgba(255, 34, 68, 0.45);
+  box-shadow: 0 0 14px rgba(255, 34, 68, 0.12);
+}
+.step-verdict.verdict-critical .step-verdict-head { color: #ff2244; }
+.step-verdict.verdict-high {
+  background: rgba(249, 115, 22, 0.12);
+  border: 1px solid rgba(249, 115, 22, 0.45);
+}
+.step-verdict.verdict-high .step-verdict-head { color: #f97316; }
+.step-verdict.verdict-medium {
+  background: rgba(234, 179, 8, 0.12);
+  border: 1px solid rgba(234, 179, 8, 0.45);
+}
+.step-verdict.verdict-medium .step-verdict-head { color: #eab308; }
+.step-verdict.verdict-low {
+  background: rgba(0, 255, 136, 0.1);
+  border: 1px solid rgba(0, 255, 136, 0.4);
+}
+.step-verdict.verdict-low .step-verdict-head { color: #00ff88; }
+
+@keyframes verdictIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Confirmation card */
 .confirm-card {
   margin: 10px 0;

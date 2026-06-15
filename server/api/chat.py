@@ -14,6 +14,9 @@ from ..services.mcp_tool_service import (
     execute_intent, match_intent, format_tool_results_for_llm,
     get_available_tools,
 )
+from ..services.react_engine import (
+    is_react_intent, react_analyze, format_react_evidence_for_llm,
+)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -504,18 +507,30 @@ async def chat(req: ChatRequest) -> ChatResponse:
     if timer_result:
         return await _handle_timer_intent(req, timer_result)
 
-    # Execute MCP tools based on intent
+    # ReAct multi-round reasoning for broad security-analysis requests;
+    # otherwise fall back to direct intent-based tool orchestration.
+    steps: list[AnalysisStep] = []
     tool_results = []
-    try:
-        tool_results = await execute_intent(req.message)
-    except Exception as e:
-        logger.warning(f"MCP tool execution failed: {e}")
+    tool_context = ""
+    react_result = None
 
-    # Build steps from real tool results
-    steps = _build_steps_from_results(tool_results)
+    if is_react_intent(req.message):
+        try:
+            react_result = await react_analyze(req.message)
+            steps = [AnalysisStep(**s) for s in react_result["steps"]]
+            tool_results = react_result["tool_results"]
+            tool_context = format_react_evidence_for_llm(react_result)
+        except Exception as e:
+            logger.warning(f"ReAct analysis failed, falling back to intent matching: {e}")
+            react_result = None
 
-    # Build tool context for LLM
-    tool_context = format_tool_results_for_llm(tool_results)
+    if react_result is None:
+        try:
+            tool_results = await execute_intent(req.message)
+        except Exception as e:
+            logger.warning(f"MCP tool execution failed: {e}")
+        steps = _build_steps_from_results(tool_results)
+        tool_context = format_tool_results_for_llm(tool_results)
 
     if DEEPSEEK_API_KEY:
         system_prompt = await _build_system_prompt()
@@ -527,6 +542,12 @@ async def chat(req: ChatRequest) -> ChatResponse:
         user_content = req.message
         if tool_context:
             user_content = f"{req.message}\n\n{tool_context}"
+        if react_result is not None:
+            user_content += (
+                "\n\n以上是 ReAct 七轮关联推理的完整证据链。请基于这些证据输出最终安全判定，"
+                "用 Markdown 格式，包含「威胁判定」「置信度评分」「证据摘要」「建议处置」"
+                "四个部分，措辞与实际证据严格对应，不要夸大严重性。"
+            )
         messages.append({"role": "user", "content": user_content})
 
         try:

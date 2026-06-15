@@ -1242,18 +1242,45 @@ async function processAIResponse(text) {
 
     // Animate analysis steps
     if (data.steps && data.steps.length > 0) {
+      const esc = s => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       for (const step of data.steps) {
         const stepEl = document.createElement('div');
-        stepEl.className = 'step';
-        stepEl.innerHTML = `
-          <span class="step-icon running">⟳</span>
-          <span class="step-tool">${step.tool}</span>
-          <span class="step-summary">${step.summary}</span>
-        `;
+        const isVerdict = step.round === 7 && step.status && step.status !== 'skip';
+        const isSkip = step.status === 'skip';
+        const isReact = step.thought != null && !isVerdict;
+
+        if (isVerdict) {
+          const icon = { critical: '🎯', high: '⚠️', medium: '🔔', low: '✅' }[step.status] || '✅';
+          stepEl.className = `step step-verdict verdict-${step.status}`;
+          stepEl.innerHTML =
+            `<div class="step-verdict-head"><span class="step-verdict-icon">${icon}</span>第 ${step.round} 轮 · 综合判定</div>` +
+            `<div class="step-verdict-body">${esc(step.summary)}</div>`;
+        } else if (isSkip) {
+          stepEl.className = 'step step-skip';
+          stepEl.innerHTML = `<span class="step-summary">⚡ ${esc(step.summary)}</span>`;
+        } else if (isReact) {
+          stepEl.className = 'step step-react';
+          stepEl.innerHTML =
+            `<div class="step-react-head">` +
+              `<span class="step-icon running">⟳</span>` +
+              `<span class="step-round">第 ${step.round} 轮</span>` +
+              `<span class="step-tool">${esc(step.tool)}</span>` +
+            `</div>` +
+            `<div class="step-thought">💭 ${esc(step.thought)}</div>` +
+            `<span class="step-summary">▸ ${esc(step.summary)}</span>`;
+        } else {
+          stepEl.className = 'step';
+          stepEl.innerHTML =
+            `<span class="step-icon running">⟳</span>` +
+            `<span class="step-tool">${esc(step.tool)}</span>` +
+            `<span class="step-summary">${esc(step.summary)}</span>`;
+        }
         stepsContainer.appendChild(stepEl);
-        await delay(800 + Math.random() * 600);
-        stepEl.querySelector('.step-icon').className = 'step-icon done';
-        stepEl.querySelector('.step-icon').textContent = '✓';
+        stepsContainer.scrollTop = stepsContainer.scrollHeight;
+        await delay(isReact ? 1000 : 800 + Math.random() * 600);
+        const icon = stepEl.querySelector('.step-icon');
+        if (icon) { icon.className = 'step-icon done'; icon.textContent = '✓'; }
       }
 
       const expandEl = document.createElement('div');
