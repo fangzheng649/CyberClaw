@@ -1,11 +1,19 @@
 """MQTT monitor service for CyberClaw.
 
 Subscribes to MQTT topics and monitors device telemetry messages.
-Detects anomalous publish rates.
+- Auto-discovers ESP32 (and any cyberclaw/sensor/ publisher) into the Devices
+  table via _upsert_esp32_device, so MQTT publishers appear as managed devices
+  without manual registration and without relying on ICMP/ARP scans.
+- Only anomalous publish rates are recorded as security events, so normal
+  telemetry (e.g. temperature every 10s) does not flood the alert timeline.
+- Tracks per-device last-seen timestamps for offline detection (_offline_watchdog).
 
 Uses paho-mqtt v2.0+.
 """
+import asyncio
+import json as _json
 import logging
+import re
 import time
 from collections import deque
 from datetime import datetime
@@ -14,6 +22,10 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGES = 1000
+
+# Valid MAC (lowercase, colon-separated). Matches the regex filter in
+# async_get_topology() so MQTT-discovered devices are not filtered out of the view.
+_MAC_RE = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 
 
 class MQTTMonitor:
@@ -25,6 +37,10 @@ class MQTTMonitor:
         self._messages: deque[dict] = deque(maxlen=MAX_MESSAGES)
         self._broadcast_fn = None
         self._topic_counts: dict[str, list[float]] = {}
+        self._device_last_seen: dict[str, float] = {}  # mac → last epoch (offline watchdog)
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._watchdog_task = None
+        self._demo_last = {}  # [展示用·临时] ESP32 演示动画节流(mac→epoch)
 
     def set_broadcast(self, fn):
         self._broadcast_fn = fn
@@ -47,6 +63,10 @@ class MQTTMonitor:
 
         self._broker = broker
         self._port = port
+        # Capture the running event loop here (we are on the main thread, awaited).
+        # paho's loop_start() runs on_message on a worker thread, where
+        # asyncio.get_event_loop() is unreliable — so we reuse this captured loop.
+        self._loop = asyncio.get_event_loop()
 
         def on_connect(client, userdata, flags, reason_code, properties=None):
             if reason_code == 0:
@@ -75,31 +95,46 @@ class MQTTMonitor:
             if len(self._topic_counts[msg.topic]) > 100:
                 self._topic_counts[msg.topic] = self._topic_counts[msg.topic][-50:]
 
-            # Persist to database (check for anomalies)
-            try:
-                from .nx_bridge import get_bridge
-                severity = "info"
-                # Simple anomaly: high publish rate
-                topic_times = self._topic_counts.get(msg.topic, [])
-                if len(topic_times) >= 10:
-                    recent = [t for t in topic_times if now - t < 60]
-                    if len(recent) > 50:
-                        severity = "warning"
-                asyncio.get_event_loop().create_task(
-                    get_bridge().record_security_event(
-                        "mqtt", severity, f"MQTT {msg.topic}: {payload[:100]}",
-                        source=msg.topic))
-            except Exception:
-                pass
+            # Anomaly rate: >50 msgs/min → warning; otherwise telemetry stays quiet.
+            severity = "info"
+            topic_times = self._topic_counts.get(msg.topic, [])
+            if len(topic_times) >= 10:
+                recent = [t for t in topic_times if now - t < 60]
+                if len(recent) > 50:
+                    severity = "warning"
+
+            # ESP32 auto-discovery: parse cyberclaw/sensor/ telemetry, upsert device.
+            if msg.topic.startswith("cyberclaw/sensor/"):
+                try:
+                    data = _json.loads(payload)
+                    mac = (data.get("mac") or "").strip().lower()
+                    if mac and _MAC_RE.fullmatch(mac):
+                        self._device_last_seen[mac] = now
+                        if self._loop and self._loop.is_running():
+                            self._loop.create_task(_upsert_esp32_device(mac, data))
+                except Exception as _e:
+                    logger.debug(f"ESP32 MQTT discovery parse failed: {_e}")
+
+            # Only record a security event for anomalous rates — normal telemetry
+            # (e.g. temperature every 10s) must NOT flood the alert timeline.
+            if severity == "warning":
+                try:
+                    from .nx_bridge import get_bridge
+                    if self._loop and self._loop.is_running():
+                        self._loop.create_task(
+                            get_bridge().record_security_event(
+                                "mqtt", severity, f"MQTT {msg.topic}: {payload[:100]}",
+                                source=msg.topic))
+                except Exception:
+                    pass
 
             if self._broadcast_fn:
-                import asyncio
                 try:
-                    loop = asyncio.get_event_loop()
-                    loop.create_task(self._broadcast_fn({
-                        "type": "mqtt_message",
-                        "message": message,
-                    }))
+                    if self._loop and self._loop.is_running():
+                        self._loop.create_task(self._broadcast_fn({
+                            "type": "mqtt_message",
+                            "message": message,
+                        }))
                 except RuntimeError:
                     pass
 
@@ -124,7 +159,6 @@ class MQTTMonitor:
 
             self._client = client
 
-            import asyncio
             await asyncio.sleep(2)
 
             if self._connected:
@@ -198,6 +232,60 @@ class MQTTMonitor:
             "topics_monitored": list(self._topic_counts.keys()),
         }
 
+    async def start_offline_watchdog(self):
+        """启动 ESP32 心跳超时离线检测。仅启动一次。"""
+        if self._watchdog_task and not self._watchdog_task.done():
+            return
+        self._watchdog_task = asyncio.get_event_loop().create_task(
+            self._offline_watchdog_loop())
+
+    async def stop_offline_watchdog(self):
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
+
+    async def _offline_watchdog_loop(self):
+        """每 15s 检查 _device_last_seen：超过 30s（3 个上报周期）没上报的 ESP32
+        标记 present=0 + 广播 device_offline。ESP32 恢复上报时 _upsert 会设回 present=1。
+        """
+        from .nx_bridge import get_bridge
+        OFFLINE_TIMEOUT = 30
+        CHECK_INTERVAL = 15
+        await asyncio.sleep(CHECK_INTERVAL)  # 启动后先等一轮，避免误判刚连上的设备
+        while True:
+            try:
+                now = time.time()
+                for mac, last_seen in list(self._device_last_seen.items()):
+                    if now - last_seen <= OFFLINE_TIMEOUT:
+                        continue
+                    bridge = get_bridge()
+                    try:
+                        dev = await bridge.get_device_by_mac(mac)
+                    except Exception:
+                        dev = None
+                    # 仅当前在线的才标记离线（避免重复广播）
+                    if dev and dev.get("devPresentLastScan", 0):
+                        await bridge.upsert_device(
+                            mac, {"devPresentLastScan": 0}, source="MQTT")
+                        name = dev.get("devName", mac)
+                        logger.info(f"[MQTT-Watchdog] {name} ({mac}) offline — no telemetry > {OFFLINE_TIMEOUT}s")
+                        self._device_last_seen.pop(mac, None)
+                        if self._broadcast_fn:
+                            await self._broadcast_fn({
+                                "type": "device_offline",
+                                "device": {
+                                    "mac": mac,
+                                    "id": _device_id_from_name(name),
+                                    "name": name,
+                                    "ip": dev.get("devLastIP", ""),
+                                },
+                            })
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"watchdog loop error: {e}")
+            await asyncio.sleep(CHECK_INTERVAL)
+
 
 _service: Optional[MQTTMonitor] = None
 
@@ -207,3 +295,192 @@ def get_mqtt_service() -> MQTTMonitor:
     if _service is None:
         _service = MQTTMonitor()
     return _service
+
+
+# ---------------------------------------------------------------------------
+# ESP32 auto-discovery: MQTT telemetry → Devices table
+# ---------------------------------------------------------------------------
+def _device_id_from_name(name: str) -> str:
+    """Mirror async_get_topology()'s id derivation so broadcast ids match."""
+    return name.lower().replace("-", "_").replace(" ", "_")
+
+
+async def _upsert_esp32_device(mac: str, data: dict):
+    """Upsert an ESP32-style sensor into Devices when its telemetry arrives.
+
+    First sighting → full insert + broadcast device_discovered + logger.info.
+    Subsequent sightings → only refresh devLastConnection/devLastIP/
+    devPresentLastScan/devCustomProps (no log spam, ~every 10s).
+    """
+    from .nx_bridge import get_bridge
+    bridge = get_bridge()
+
+    try:
+        existing = await bridge.get_device_by_mac(mac)
+    except Exception:
+        existing = None
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    dev_name = (data.get("device") or "esp32-sensor").upper()  # e.g. "ESP32-01"
+    custom = {
+        "temp": data.get("temp"),
+        "hum": data.get("hum"),
+        "rssi": data.get("rssi"),
+        "ts": data.get("ts"),
+        "device": data.get("device"),
+    }
+
+    if not existing:
+        svc = get_mqtt_service()
+        payload = {
+            "devMac": mac,
+            "devName": dev_name,
+            "devType": "sensor",
+            "devVendor": "Espressif",
+            "devModel": "ESP32-S3-DevKitC-1 + DHT22",
+            "devLastIP": data.get("ip", ""),
+            "devStatus": "secure",
+            "devPresentLastScan": 1,
+            "devIsNew": 1,
+            "devIsArchived": 0,
+            "devSourcePlugin": "MQTT",
+            "devDiscoveryMethod": "mqtt",
+            "devProtocols": _json.dumps(["mqtt", "wifi"]),
+            "devRole": "target",
+            "devPos": _json.dumps([3, 0, 12]),
+            "devParentMAC": "",
+            "devCustomProps": _json.dumps(custom),
+            "devLastConnection": now,
+            "devFirstConnection": now,
+            "devNotes": "Auto-discovered via MQTT telemetry (WiFi segment)",
+        }
+        # ★ ESP32 upsert 必须最先执行：确保 DB 立刻有 ESP32(present=1, method=mqtt)。
+        # 否则下面的 mock→real 广播(mode_changed + 逐台 device_discovered)耗时期间，
+        # scan_service._check_mode_switch 会因 DB 无在线真实设备(any_online=False)切回 mock，
+        # 删掉刚 seed 的设备 → mock→real→mock 死循环。
+        try:
+            await bridge.upsert_device(mac, payload, source="MQTT")
+            logger.info(f"[MQTT-Discovery] New ESP32 device registered: {mac} ip={data.get('ip')}")
+        except Exception as _e:
+            logger.error(f"[MQTT-Discovery] upsert failed: {_e}")
+        # ESP32 已在 DB(present=1)。现在处理 mock→real 切换 + 广播发现通知。
+        try:
+            from .topology_service import is_mock_mode, set_mock_mode
+            if is_mock_mode():
+                set_mock_mode(False)
+                from server.services.db.seed_service import seed_from_config
+                seeded_devs = await seed_from_config(force=True) or []
+                logger.info(f"[MQTT-Discovery] ESP32 arrival → switched MOCK→REAL ({len(seeded_devs)} real devices re-seeded)")
+                if svc._broadcast_fn:
+                    # mode_changed：前端 buildTopology 重建到真实视图。快照含 config + ESP32
+                    # （ESP32 已 upsert），mock 被 async_get_topology 过滤掉。
+                    try:
+                        from .topology_service import async_get_topology
+                        topo = await async_get_topology()
+                        _mc_devices = topo.model_dump()["devices"]
+                        await svc._broadcast_fn({
+                            "type": "mode_changed",
+                            "mode": "real",
+                            "reason": "esp32_arrival",
+                            "mock_mode": False,
+                            "devices": _mc_devices,
+                            "links": [{"from": l.from_, "to": l.to} for l in topo.links],
+                        })
+                        _mc_mock = sum(1 for d in _mc_devices if d.get("discovery_method") == "mock")
+                        logger.info(f"[MQTT-Discovery] mode_changed broadcast: {len(_mc_devices)} devices ({_mc_mock} mock)")
+                    except Exception as _me:
+                        logger.warning(f"[MQTT-Discovery] mode_changed broadcast failed: {_me}")
+                    # 逐台 config 设备发现通知（波纹+toast；addDeviceToScene 靠 id 去重跳过重复添加）
+                    for sd in seeded_devs:
+                        try:
+                            await svc._broadcast_fn({
+                                "type": "device_discovered",
+                                "device": {
+                                    "mac": sd["mac"],
+                                    "id": _device_id_from_name(sd["name"]) if sd.get("name") else sd["mac"].replace(":", ""),
+                                    "name": sd.get("name", ""),
+                                    "ip": sd.get("ip", ""),
+                                    "type": sd.get("type", "unknown"),
+                                    "device_type": sd.get("type", "unknown"),
+                                    "vendor": sd.get("vendor", ""),
+                                    "model": sd.get("model", ""),
+                                    "pos": sd.get("pos", []),
+                                    "status": "secure",
+                                },
+                            })
+                        except Exception:
+                            pass
+                    # ESP32 发现通知（波纹+toast；mode_changed 快照已含 ESP32，addDeviceToScene 去重跳过）
+                    try:
+                        await svc._broadcast_fn({
+                            "type": "device_discovered",
+                            "device": {
+                                "mac": mac,
+                                "id": _device_id_from_name(dev_name),
+                                "name": dev_name,
+                                "ip": data.get("ip", ""),
+                                "type": "sensor",
+                                "device_type": "sensor",
+                                "vendor": "Espressif",
+                                "model": "ESP32-S3-DevKitC-1 + DHT22",
+                                "pos": [3, 0, 12],
+                                "status": "secure",
+                            },
+                        })
+                    except Exception:
+                        pass
+        except Exception as _e:
+            logger.warning(f"[MQTT-Discovery] mock→real switch failed: {_e}")
+    else:
+        update = {
+            "devLastConnection": now,
+            "devLastIP": data.get("ip", ""),
+            "devPresentLastScan": 1,
+            "devCustomProps": _json.dumps(custom),
+        }
+        try:
+            await bridge.upsert_device(mac, update, source="MQTT")
+        except Exception as _e:
+            logger.debug(f"[MQTT-Discovery] refresh failed: {_e}")
+        # [展示用·临时] ESP32 持续上报时，每 60s 触发一次"清除虚拟设备+展示真实+发现动画"
+        # 演示。节流避免每 10s 上报都触发。正式方案应基于真实 mock→real/online 事件，
+        # 此处仅用于竞赛演示，已存记忆，后续重新实现。
+        _now = time.time()
+        svc = get_mqtt_service()
+        if _now - svc._demo_last.get(mac, 0) > 60:
+            svc._demo_last[mac] = _now
+            logger.info(f"[MQTT-Discovery] demo tick: clear virtual + show real + discovery animation")
+            if svc._broadcast_fn:
+                # mode_changed：前端 buildTopology 清除虚拟 + 显示真实
+                try:
+                    from .topology_service import async_get_topology
+                    topo = await async_get_topology()
+                    await svc._broadcast_fn({
+                        "type": "mode_changed",
+                        "mode": "real",
+                        "reason": "esp32_demo_refresh",
+                        "mock_mode": False,
+                        "devices": topo.model_dump()["devices"],
+                        "links": [{"from": l.from_, "to": l.to} for l in topo.links],
+                    })
+                except Exception as _me:
+                    logger.warning(f"[MQTT-Discovery] demo mode_changed failed: {_me}")
+                # device_discovered：ESP32 发现动画（波纹+toast）
+                try:
+                    await svc._broadcast_fn({
+                        "type": "device_discovered",
+                        "device": {
+                            "mac": mac,
+                            "id": _device_id_from_name(dev_name),
+                            "name": dev_name,
+                            "ip": data.get("ip", ""),
+                            "type": "sensor",
+                            "device_type": "sensor",
+                            "vendor": "Espressif",
+                            "model": "ESP32-S3-DevKitC-1 + DHT22",
+                            "pos": [3, 0, 12],
+                            "status": "secure",
+                        },
+                    })
+                except Exception:
+                    pass

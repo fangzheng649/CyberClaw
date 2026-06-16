@@ -294,10 +294,14 @@ def _sync_update_presence() -> list[dict]:
 
         # Step 1: Find devices going DOWN (were present, not in current scan)
         # Must run BEFORE any presence updates so we see the old values.
+        # Exclude mock (demo data, never scanned) and mqtt (presence driven by MQTT
+        # heartbeat, not subnet scan — ESP32 is on a different subnet and would
+        # otherwise flip present=0 every cycle + flood "device down" alerts).
         down_rows = conn.execute("""
             SELECT devMac, devLastIP
             FROM Devices
             WHERE devPresentLastScan = 1
+              AND devDiscoveryMethod NOT IN ('mock', 'mqtt')
               AND NOT EXISTS (
                   SELECT 1 FROM CurrentScan cs WHERE cs.scanMac = Devices.devMac
               )
@@ -322,12 +326,14 @@ def _sync_update_presence() -> list[dict]:
             )
         """)
 
-        # Mark devices NOT in CurrentScan as absent
+        # Mark devices NOT in CurrentScan as absent.
+        # Exclude mock (demo data) and mqtt (MQTT-heartbeat presence) devices.
         conn.execute("""
             UPDATE Devices SET devPresentLastScan = 0
-            WHERE NOT EXISTS (
-                SELECT 1 FROM CurrentScan cs WHERE cs.scanMac = Devices.devMac
-            )
+            WHERE devDiscoveryMethod NOT IN ('mock', 'mqtt')
+              AND NOT EXISTS (
+                  SELECT 1 FROM CurrentScan cs WHERE cs.scanMac = Devices.devMac
+              )
         """)
 
         # Step 4: Emit events for down devices
@@ -401,13 +407,17 @@ def _sync_update_icons_and_types():
     """For devices with empty devType/devIcon, infer via heuristics."""
     conn = get_temp_db_connection()
     try:
-        # Find devices with empty or null devType
+        # Find devices with empty or null devType.
+        # NOTE: NULL_EQUIVALENTS_SQL is a COALESCE(COL,..)IN(..) template (COL = placeholder),
+        # NOT an IN-list — interpolating it raw produced "no such column: COL".
+        # Use a parameterized IN-list built from NULL_EQUIVALENTS instead.
+        _null_ph = ",".join("?" * len(NULL_EQUIVALENTS))
         type_rows = conn.execute(f"""
             SELECT devMac, devVendor, devLastIP, devName
             FROM Devices
-            WHERE COALESCE(devType, '') IN ({NULL_EQUIVALENTS_SQL})
+            WHERE COALESCE(devType, '') IN ({_null_ph})
                OR devType IS NULL
-        """).fetchall()
+        """, NULL_EQUIVALENTS).fetchall()
 
         type_updates = []
         icon_updates = []

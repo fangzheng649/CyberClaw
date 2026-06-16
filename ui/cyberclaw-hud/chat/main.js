@@ -1544,6 +1544,7 @@ const COLLECTORS = [
   { id: 'mqtt', name: 'MQTT', icon: 'fa-solid fa-tower-broadcast', color: '#eab308',
     startApi: '/api/tools/mqtt/connect', stopApi: '/api/tools/mqtt/disconnect', statusApi: '/api/tools/mqtt/status',
     statusField: 'connected', countField: 'messages_stored', label: 'Broker',
+    startBody: { broker: '127.0.0.1', port: 1883, topics: ['cyberclaw/sensor/#'] },
     needsConfig: true },
   { id: 'suricata', name: 'Suricata IDS', icon: 'fa-solid fa-shield-halved', color: '#f97316',
     startApi: '/api/tools/suricata/start', stopApi: '/api/tools/suricata/stop', statusApi: '/api/tools/suricata/stats',
@@ -1580,9 +1581,9 @@ async function fetchCollectors() {
         <span class="cl-count">${count} 条</span>
       </div>
       ${c.needsConfig ? `<div class="cl-config" id="cl-cfg-${c.id}" style="display:none">
-        <input type="text" class="ops-input cl-cfg-field" id="cl-mqtt-broker" placeholder="Broker 地址 (如 192.168.1.1)" />
+        <input type="text" class="ops-input cl-cfg-field" id="cl-mqtt-broker" placeholder="Broker 地址 (如 127.0.0.1)" value="127.0.0.1" />
         <input type="number" class="ops-input cl-cfg-field" id="cl-mqtt-port" placeholder="端口" value="1883" style="width:60px" />
-        <input type="text" class="ops-input cl-cfg-field" id="cl-mqtt-topics" placeholder="Topics (逗号分隔, 默认 #)" />
+        <input type="text" class="ops-input cl-cfg-field" id="cl-mqtt-topics" placeholder="Topics (逗号分隔)" value="cyberclaw/sensor/#" />
       </div>` : ''}
       <div class="cl-actions">
         ${c.needsConfig ? `<button class="ops-action-btn start cl-toggle" data-collector="${c.id}" data-action="config" ${running ? 'style="display:none"' : ''}>配置并启动</button>` : ''}

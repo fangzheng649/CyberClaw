@@ -6,10 +6,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-async def seed_from_config():
-    """将 topology config 的设备导入数据库（仅在空库时执行）
+async def seed_from_config(force: bool = False):
+    """将 topology config 的设备导入数据库（默认仅在空库时执行）
 
     自动读取当前模式的配置：mock 模式读 mock_topology.json，real 模式读 topology.json。
+    force=True 时跳过空库检查，upsert 配置设备（用于 mock→real 切换时补回真实拓扑，
+    不删除既有 mock 数据）。
     """
     from server.services.nx_bridge import get_bridge
     from server.services.topology_service import is_mock_mode
@@ -18,7 +20,7 @@ async def seed_from_config():
 
     # 检查数据库是否已有设备
     existing = await bridge.get_all_devices()
-    if existing:
+    if existing and not force:
         logger.info(f"Database already has {len(existing)} devices, skipping seed")
         return
 
@@ -34,7 +36,7 @@ async def seed_from_config():
     config = json.loads(config_path.read_text(encoding="utf-8"))
     devices = config.get("devices", [])
 
-    seeded = 0
+    seeded_devs = []
     for dev in devices:
         mac = dev.get("mac", "").lower()
         if not mac:
@@ -64,7 +66,16 @@ async def seed_from_config():
             "devSerialNumber": dev.get("serial_number", ""),
         }
         await bridge.upsert_device(mac, data, source="CONFIG")
-        seeded += 1
+        seeded_devs.append({
+            "mac": mac,
+            "name": dev.get("name", ""),
+            "ip": dev.get("ip", ""),
+            "type": dev.get("type", "unknown"),
+            "vendor": dev.get("vendor", ""),
+            "model": dev.get("model", ""),
+            "pos": dev.get("pos", []),
+        })
 
-    logger.info(f"Seeded {seeded}/{len(devices)} devices from {config_path.name}"
+    logger.info(f"Seeded {len(seeded_devs)}/{len(devices)} devices from {config_path.name}"
                 f" ({'mock' if mock_mode else 'real'} mode)")
+    return seeded_devs

@@ -44,6 +44,25 @@ def _normalize_mac(raw_mac: str) -> str:
     return mac
 
 
+async def _broadcast_mode_changed(mode: str, reason: str):
+    """广播 mode_changed 让前端主动切换视图（无需刷新页面）。
+    携带 async_get_topology 完整快照，前端 buildTopology 重建。"""
+    try:
+        from server.services.tool_broadcast_service import _broadcast as _tb
+        from server.services.topology_service import async_get_topology
+        topo = await async_get_topology()
+        await _tb({
+            "type": "mode_changed",
+            "mode": mode,
+            "reason": reason,
+            "mock_mode": (mode == "mock"),
+            "devices": topo.model_dump()["devices"],
+            "links": [{"from": l.from_, "to": l.to} for l in topo.links],
+        })
+    except Exception as e:
+        logger.debug(f"mode_changed broadcast failed: {e}")
+
+
 class ScanService:
     def __init__(self):
         self._running = False
@@ -89,7 +108,11 @@ class ScanService:
             await asyncio.sleep(interval)
 
     async def _check_mode_switch(self):
-        """Check if system should switch between mock and real mode."""
+        """已禁用：模式切换由 MQTT 发现(_upsert_esp32_device 驱动 mock→real)和启动
+        检测(_detect_and_set_mode)负责。原逻辑(DELETE Devices + seed)与 MQTT 驱动
+        冲突——会删掉刚被 MQTT 发现的 ESP32，导致 any_online=False 又切回 mock，循环。
+        scan_service 现在只负责扫描 + presence，不再切模式。"""
+        return
         try:
             from .nx_bridge import get_bridge
             from .topology_service import set_mock_mode, is_mock_mode, _config_cache
@@ -117,6 +140,7 @@ class ScanService:
                 conn.close()
                 from server.services.db.seed_service import seed_from_config
                 await seed_from_config()
+                await _broadcast_mode_changed("real", "scan_detected")
 
             elif not any_online and not currently_mock:
                 # All devices went offline → switch to mock mode
@@ -130,6 +154,7 @@ class ScanService:
                 conn.close()
                 from server.services.db.seed_service import seed_from_config
                 await seed_from_config()
+                await _broadcast_mode_changed("mock", "no_real_devices")
 
         except Exception as e:
             logger.debug(f"Mode switch check failed: {e}")

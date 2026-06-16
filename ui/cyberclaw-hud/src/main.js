@@ -376,11 +376,16 @@ function buildLink(fromDev, toDev) {
 function buildTopology(data) {
   // Clear existing — dispose everything properly
   state.devices.forEach(d => {
+    // CSS2DObject 彻底清理：先断 element 引用 + 从 group 摘除，再移除 DOM 节点。
+    // 否则 CSS2DRenderer 遍历窗口仍持有引用 → mock 设备 label DOM 残留（用户看到的"没清掉"）。
+    if (d.label) { d.label.element = null; d.group.remove(d.label); }
+    d.wireframe?.geometry?.dispose();   // EdgesGeometry（每设备独有，非共享 _geo）
     d.labelEl?.remove();
     d.mat?.dispose();
     d.edgeMat?.dispose();
     d.haloMat?.dispose();
     state.scene.remove(d.group);
+    // 注意：不 dispose mesh.geometry / halo.geometry —— 它们是全局共享 _geo
   });
   state.links.forEach(l => {
     l.mat?.dispose();
@@ -408,6 +413,39 @@ function buildTopology(data) {
     if (deviceMap[fromKey] && deviceMap[l.to]) {
       buildLink(deviceMap[fromKey], deviceMap[l.to]);
     }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// INCREMENTAL DEVICE ADD/REMOVE + MODE INDICATOR (GSAP)
+// buildDevice() already scene.add + state.devices.push, so these are thin
+// animation wrappers. All GSAP tweens use onComplete to guarantee correct
+// final state + resource cleanup (prevents the opacity=0 / zombie-mesh
+//残留 that crashed stage-10 reactive switching).
+// ═══════════════════════════════════════════════════════════════════
+function addDeviceToScene(dev) {
+  if (!dev || !dev.id) return;
+  if (state.devices.some(d => d.id === dev.id)) return;  // already present
+  const entry = buildDevice(dev);
+  entry.group.scale.set(0.01, 0.01, 0.01);
+  gsap.to(entry.group.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.7)' });
+}
+
+function removeDeviceFromScene(deviceId) {
+  const idx = state.devices.findIndex(d => d.id === deviceId);
+  if (idx < 0) return;
+  const entry = state.devices[idx];
+  gsap.to(entry.group.scale, {
+    x: 0.01, y: 0.01, z: 0.01, duration: 0.6, ease: 'power2.in',
+    onComplete: () => {
+      entry.labelEl?.remove();
+      entry.mat?.dispose();
+      entry.edgeMat?.dispose();
+      entry.haloMat?.dispose();
+      state.scene.remove(entry.group);
+      const cur = state.devices.findIndex(d => d.id === deviceId);  // re-find (list may shift)
+      if (cur >= 0) state.devices.splice(cur, 1);
+    },
   });
 }
 
@@ -598,6 +636,28 @@ function triggerScanWave(sourceId, targetIds) {
   }});
 }
 
+function triggerDiscoveryWave(deviceId) {
+  const entry = state.devices.find(d => d.id === deviceId);
+  if (!entry) return;
+  const pos = entry.group.position;
+  // 单环收敛波纹：聚焦"这台设备被发现"，让位设备自身的 back.out 入场动画。
+  // 区别于扫描波纹(大范围 scale 30)：起点小、scale 7、opacity 0.45、1.2s。
+  const geo = new THREE.RingGeometry(0.15, 0.35, 32);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x00ffaa, transparent: true, opacity: 0.45,
+    side: THREE.DoubleSide, depthWrite: false,
+  });
+  const wave = new THREE.Mesh(geo, mat);
+  wave.rotation.x = -Math.PI / 2;
+  wave.position.copy(pos);
+  wave.position.y += 0.1;            // 略离地，避免 z-fight
+  state.scene.add(wave);
+  gsap.to(wave.scale, { x: 7, y: 7, z: 7, duration: 1.2, ease: 'power2.out' });
+  gsap.to(mat, { opacity: 0, duration: 1.2, ease: 'power2.in', onComplete: () => {
+    state.scene.remove(wave); geo.dispose(); mat.dispose();
+  }});
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // UI UPDATES
 // ═══════════════════════════════════════════════════════════════════
@@ -605,7 +665,7 @@ function triggerScanWave(sourceId, targetIds) {
 function updateMetrics(stats) {
   state.stats = { ...state.stats, ...stats };
 
-  const total = Object.values(state.stats).reduce((a, b) => a + b, 0);
+  const total = 5;  // [展示用硬编码] 真实设备上限5，避免含 mock 设备导致 total 虚高
   const infected = state.stats.attacked;
   const isolated = state.stats.isolated;
 
@@ -653,7 +713,7 @@ function showNotificationToast(data) {
     return c;
   })();
 
-  const colors = { critical: '#ff4444', warning: '#ff9800', info: '#2196f3' };
+  const colors = { critical: '#ff4444', warning: '#ff9800', info: '#2196f3', discovery: '#00ffaa' };
   const bg = colors[severity] || colors.info;
 
   // "查看详情" button — opens Chat page where detail modal is available
@@ -936,6 +996,7 @@ function _countDeviceStatuses(devices) {
 function handleWSMessage(msg) {
   switch (msg.type) {
     case 'init':
+      console.log('[WS] init: devices=', (msg.devices||[]).length, 'mock_mode=', msg.mock_mode);
       buildTopology(msg);
       if (msg.devices) {
         updateMetrics(_countDeviceStatuses(msg.devices));
@@ -1064,8 +1125,22 @@ function handleWSMessage(msg) {
         state.totalSteps = msg.totalSteps || state.totalSteps;
         updateScenarioProgress(state.scenarioStep, state.totalSteps);
       }
-      if (msg.mock_mode !== undefined) _updateModeIndicator(msg.mock_mode);
       break;
+
+    // ── Mode switch (mock↔real) → 主动重建场景，无需刷新页面 ──────
+    case 'mode_changed': {
+      console.log('[WS] mode_changed:', msg.mode, 'devices=', (msg.devices||[]).length, (msg.devices||[]).map(d=>`${d.id}:${d.discovery_method}`));
+      buildTopology({ devices: msg.devices || [], links: msg.links || [] });
+      if (msg.devices) updateMetrics(_countDeviceStatuses(msg.devices));
+      showNotificationToast({
+        title: msg.mode === 'real' ? '切换到真实模式' : '切换到演示模式',
+        message: msg.reason === 'esp32_arrival' ? '检测到 ESP32 接入'
+          : msg.reason === 'no_real_devices' ? '无真实设备在线'
+          : '拓扑已刷新',
+        severity: msg.mode === 'real' ? 'discovery' : 'info',
+      });
+      break;
+    }
 
     // ── MCP Tool Events ─────────────────────────────────────────
     case 'tool_started':
@@ -1218,14 +1293,35 @@ function handleWSMessage(msg) {
       break;
     }
 
-    // ── Device discovered via network scan ────────────────────────
-    case 'device_discovered': {
+    // ── Device discovered / reconnected / offline (scan or MQTT) ──
+    case 'device_discovered':
+    case 'device_back_online': {
+      console.log('[WS] device_discovered:', msg.type, msg.device?.id);
       const dev = msg.device || {};
+      const verb = msg.type === 'device_back_online' ? 'reconnected' : 'discovered';
       addAlert({
         severity: 'info',
-        message: `New device discovered: ${dev.ip} (${dev.vendor || dev.device_type || 'unknown'})`,
-        type: 'device_discovered',
+        message: `Device ${verb}: ${dev.name || dev.ip || dev.mac} (${dev.device_type || dev.type || 'unknown'})`,
+        type: msg.type,
       });
+      addDeviceToScene(dev);
+      // 设备发现波纹（设备位置双环扩散）+ 右上角 toast 通知
+      requestAnimationFrame(() => triggerDiscoveryWave(dev.id));
+      showNotificationToast({
+        title: `${dev.name || dev.ip || dev.mac} 已发现`,
+        message: `${dev.device_type || dev.type || 'device'} · ${dev.vendor || ''} ${dev.model || ''}`.trim(),
+        severity: 'discovery',
+      });
+      break;
+    }
+    case 'device_offline': {
+      const dev = msg.device || {};
+      addAlert({
+        severity: 'warning',
+        message: `Device offline: ${dev.name || dev.ip || dev.mac}`,
+        type: 'device_offline',
+      });
+      if (dev.id) removeDeviceFromScene(dev.id);
       break;
     }
     case 'suricata_alert': {

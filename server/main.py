@@ -86,6 +86,21 @@ async def _detect_and_set_mode(bridge):
             await seed_from_config()
             topology_service._config_cache = None  # clear again for fresh load
             logger.info("DB re-seeded with mock demo devices")
+            # 广播 mode_changed 让已连接的前端主动切到 mock 视图（启动早期客户端兜底；
+            # 主要靠 /ws init 消息携带 mock_mode）
+            try:
+                from .services.topology_service import async_get_topology
+                _mt = await async_get_topology()
+                await ws_manager.broadcast({
+                    "type": "mode_changed",
+                    "mode": "mock",
+                    "reason": "no_real_devices",
+                    "mock_mode": True,
+                    "devices": _mt.model_dump()["devices"],
+                    "links": [{"from": l.from_, "to": l.to} for l in _mt.links],
+                })
+            except Exception as _e:
+                logger.debug(f"startup mode_changed(mock) broadcast skipped: {_e}")
         except Exception as e:
             logger.warning(f"Mock re-seed failed: {e}")
     else:
@@ -108,7 +123,14 @@ async def heartbeat_loop():
     """Broadcast heartbeat every 5 seconds."""
     while True:
         await asyncio.sleep(5)
-        devices = scenario_service.get_devices()
+        # 用实时拓扑算 stats（async_get_topology 真实模式过滤 mock），而非 scenario_service
+        # 的静态拓扑（启动时设定、mock→real 后不更新 → 含 mock 设备导致 INFECTED 总数虚高）。
+        try:
+            from .services.topology_service import async_get_topology
+            _hb_topo = await async_get_topology()
+            devices = [{"status": d.status} for d in _hb_topo.devices]
+        except Exception:
+            devices = scenario_service.get_devices()
         if devices:
             stats = {
                 "secure": sum(1 for d in devices if d["status"] == "secure"),
@@ -208,6 +230,21 @@ async def lifespan(app: FastAPI):
     # 检测是否需要切换到 mock 模式
     # 等待初始扫描完成后判断（最多等 15 秒）
     await _detect_and_set_mode(bridge)
+    # 自动连接本地 MQTT broker（ESP32 MQTT 自动发现的前提；不在则静默跳过，不影响现有功能）
+    try:
+        # 直接 paho connect（内部 connect_async + 2s wait，比 socket 前置探测可靠；
+        # broker 不在则返回 timeout，跳过 subscribe）。避免 Windows 首次 socket 连接
+        # 延迟/防火墙导致探测误判。
+        from .services.mqtt_service import get_mqtt_service
+        _r = await get_mqtt_service().connect("127.0.0.1", 1883)
+        if _r.get("status") == "connected":
+            await get_mqtt_service().subscribe(["cyberclaw/sensor/#"])
+            await get_mqtt_service().start_offline_watchdog()
+            logger.info("Auto-connected local MQTT broker (127.0.0.1:1883) + offline watchdog started")
+        else:
+            logger.info(f"Local MQTT broker connect returned: {_r.get('status')} (ok if broker not running)")
+    except Exception as _e:
+        logger.debug(f"MQTT auto-connect skipped: {_e}")
     # Mock 模式检测完成后，重新加载拓扑到 scenario_service
     # （模块加载时 get_topology() 在 mock 模式设置之前执行，数据不正确）
     topology = await async_get_topology()
@@ -231,6 +268,11 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Mock state service start failed: {e}")
     yield
     hb_task.cancel()
+    # 停止 MQTT 离线检测 watchdog
+    try:
+        await get_mqtt_service().stop_offline_watchdog()
+    except Exception:
+        pass
     # 停止 Mock 模拟器
     try:
         from .services.mock_state_service import get_mock_simulator
