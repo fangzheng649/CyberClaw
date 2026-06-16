@@ -40,7 +40,6 @@ class MQTTMonitor:
         self._device_last_seen: dict[str, float] = {}  # mac → last epoch (offline watchdog)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._watchdog_task = None
-        self._demo_last = {}  # [展示用·临时] ESP32 演示动画节流(mac→epoch)
 
     def set_broadcast(self, fn):
         self._broadcast_fn = fn
@@ -432,6 +431,8 @@ async def _upsert_esp32_device(mac: str, data: dict):
         except Exception as _e:
             logger.warning(f"[MQTT-Discovery] mock→real switch failed: {_e}")
     else:
+        _present = existing.get("devPresentLastScan", 0) if isinstance(existing, dict) else 0
+        was_offline = not _present
         update = {
             "devLastConnection": now,
             "devLastIP": data.get("ip", ""),
@@ -442,33 +443,14 @@ async def _upsert_esp32_device(mac: str, data: dict):
             await bridge.upsert_device(mac, update, source="MQTT")
         except Exception as _e:
             logger.debug(f"[MQTT-Discovery] refresh failed: {_e}")
-        # [展示用·临时] ESP32 持续上报时，每 60s 触发一次"清除虚拟设备+展示真实+发现动画"
-        # 演示。节流避免每 10s 上报都触发。正式方案应基于真实 mock→real/online 事件，
-        # 此处仅用于竞赛演示，已存记忆，后续重新实现。
-        _now = time.time()
-        svc = get_mqtt_service()
-        if _now - svc._demo_last.get(mac, 0) > 60:
-            svc._demo_last[mac] = _now
-            logger.info(f"[MQTT-Discovery] demo tick: clear virtual + show real + discovery animation")
+        # 设备恢复上线（之前离线，现在又上报）→ 广播 device_back_online（上线波纹+toast）
+        if was_offline:
+            logger.info(f"[MQTT-Discovery] ESP32 {mac} back online")
+            svc = get_mqtt_service()
             if svc._broadcast_fn:
-                # mode_changed：前端 buildTopology 清除虚拟 + 显示真实
-                try:
-                    from .topology_service import async_get_topology
-                    topo = await async_get_topology()
-                    await svc._broadcast_fn({
-                        "type": "mode_changed",
-                        "mode": "real",
-                        "reason": "esp32_demo_refresh",
-                        "mock_mode": False,
-                        "devices": topo.model_dump()["devices"],
-                        "links": [{"from": l.from_, "to": l.to} for l in topo.links],
-                    })
-                except Exception as _me:
-                    logger.warning(f"[MQTT-Discovery] demo mode_changed failed: {_me}")
-                # device_discovered：ESP32 发现动画（波纹+toast）
                 try:
                     await svc._broadcast_fn({
-                        "type": "device_discovered",
+                        "type": "device_back_online",
                         "device": {
                             "mac": mac,
                             "id": _device_id_from_name(dev_name),

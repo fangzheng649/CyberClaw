@@ -21,8 +21,8 @@
         "new_device",
         "device_down"
       ],
-      "last_run_ts": 1781615865.0768602,
-      "run_count": 322
+      "last_run_ts": 1781619792.5259438,
+      "run_count": 332
     },
     {
       "id": "cve_check",
@@ -44,8 +44,8 @@
       "notify_on": [
         "new_vulnerability"
       ],
-      "last_run_ts": 1781615609.4030788,
-      "run_count": 42
+      "last_run_ts": 1781619214.046529,
+      "run_count": 43
     },
     {
       "id": "baseline_check",
@@ -66,8 +66,8 @@
       "notify_on": [
         "score_drop"
       ],
-      "last_run_ts": 1781615579.2918072,
-      "run_count": 64
+      "last_run_ts": 1781619179.3270051,
+      "run_count": 66
     },
     {
       "id": "traffic_analysis",
@@ -86,8 +86,8 @@
       "notify_on": [
         "ioc_found"
       ],
-      "last_run_ts": 1781616166.978054,
-      "run_count": 167
+      "last_run_ts": 1781619493.1485114,
+      "run_count": 172
     },
     {
       "id": "config_audit",
@@ -106,8 +106,8 @@
       "notify_on": [
         "misconfiguration"
       ],
-      "last_run_ts": 1781615656.333752,
-      "run_count": 47
+      "last_run_ts": 1781619261.4035554,
+      "run_count": 48
     }
   ]
 }

@@ -665,7 +665,7 @@ function triggerDiscoveryWave(deviceId) {
 function updateMetrics(stats) {
   state.stats = { ...state.stats, ...stats };
 
-  const total = 5;  // [展示用硬编码] 真实设备上限5，避免含 mock 设备导致 total 虚高
+  const total = Object.values(state.stats).reduce((a, b) => a + b, 0);
   const infected = state.stats.attacked;
   const isolated = state.stats.isolated;
 
@@ -996,7 +996,6 @@ function _countDeviceStatuses(devices) {
 function handleWSMessage(msg) {
   switch (msg.type) {
     case 'init':
-      console.log('[WS] init: devices=', (msg.devices||[]).length, 'mock_mode=', msg.mock_mode);
       buildTopology(msg);
       if (msg.devices) {
         updateMetrics(_countDeviceStatuses(msg.devices));
@@ -1129,7 +1128,6 @@ function handleWSMessage(msg) {
 
     // ── Mode switch (mock↔real) → 主动重建场景，无需刷新页面 ──────
     case 'mode_changed': {
-      console.log('[WS] mode_changed:', msg.mode, 'devices=', (msg.devices||[]).length, (msg.devices||[]).map(d=>`${d.id}:${d.discovery_method}`));
       buildTopology({ devices: msg.devices || [], links: msg.links || [] });
       if (msg.devices) updateMetrics(_countDeviceStatuses(msg.devices));
       showNotificationToast({
@@ -1296,7 +1294,6 @@ function handleWSMessage(msg) {
     // ── Device discovered / reconnected / offline (scan or MQTT) ──
     case 'device_discovered':
     case 'device_back_online': {
-      console.log('[WS] device_discovered:', msg.type, msg.device?.id);
       const dev = msg.device || {};
       const verb = msg.type === 'device_back_online' ? 'reconnected' : 'discovered';
       addAlert({

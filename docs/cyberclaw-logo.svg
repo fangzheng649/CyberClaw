@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <linearGradient id="clawGrad" gradientUnits="userSpaceOnUse" x1="86" y1="8" x2="8" y2="106">
+      <stop offset="0%" stop-color="#00e5ff"/>
+      <stop offset="100%" stop-color="#00ff88"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2.8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- hexagon -->
+  <path d="M60,10 L104,32 L104,80 L60,102 L16,80 L16,32 Z"
+        stroke="rgba(0,229,255,0.5)" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
+  <!-- sharp tapered claw slashes -->
+  <g filter="url(#glow)">
+    <polygon points="74,5 80,15 8,98" fill="url(#clawGrad)" opacity="0.95"/>
+    <polygon points="84,22 90,32 20,110" fill="url(#clawGrad)" opacity="0.88"/>
+    <polygon points="94,40 100,50 32,118" fill="url(#clawGrad)" opacity="0.80"/>
+  </g>
+</svg>
