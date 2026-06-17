@@ -1107,6 +1107,11 @@ function handleWSMessage(msg) {
     case 'device_isolated':
       updateDeviceStatus(msg.target, 'isolated');
       addAlert(msg);
+      showNotificationToast({
+        title: '设备已隔离',
+        message: msg.message || `设备 ${msg.target} 已隔离，防护盾已激活`,
+        severity: 'warning',
+      });
       break;
 
     case 'threat_resolved':
@@ -1493,13 +1498,25 @@ async function triggerCveCheck(deviceId, vendor, model) {
 async function triggerDeviceIsolation(deviceId) {
   const entry = state.devices.find(d => d.id === deviceId);
   if (!entry) return;
+  // 防重复点击：禁用按钮 + 显示隔离中（隔离成功后由 device_isolated 广播刷新面板，按钮自动变 RESTORE）
+  const btn = dom.detailPanel.querySelector('.action-btn.isolate');
+  const restoreBtn = () => {
+    const b = dom.detailPanel.querySelector('.action-btn.isolate');
+    if (b && b.disabled) { b.disabled = false; b.classList.remove('is-busy'); b.textContent = 'ISOLATE'; }
+  };
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); btn.textContent = 'ISOLATING...'; }
   try {
     await fetch('/api/tools/isolate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device_id: deviceId, device_ip: entry.payload.ip }),
     });
-  } catch (e) { console.error('Isolation failed:', e); }
+    // 兜底：8s 后若按钮仍处于 disabled（广播丢失/未刷新面板），恢复可点击
+    setTimeout(restoreBtn, 8000);
+  } catch (e) {
+    console.error('Isolation failed:', e);
+    restoreBtn();
+  }
 }
 
 async function triggerDeviceRestore(deviceId) {
