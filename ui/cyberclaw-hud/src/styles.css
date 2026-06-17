@@ -113,7 +113,7 @@ button, input { font: inherit; }
 }
 
 .topbar-brand { flex-shrink: 0; display: flex; align-items: center; gap: 12px; }
-.brand-logo { height: 38px; width: auto; flex-shrink: 0; filter: drop-shadow(0 0 8px rgba(0,229,255,0.35)); }
+.brand-logo { height: 46px; width: auto; flex-shrink: 0; filter: drop-shadow(0 0 8px rgba(0,229,255,0.35)); }
 
 .brand {
   font-family: var(--display);
@@ -789,8 +789,8 @@ button, input { font: inherit; }
 }
 
 .loading-logo {
-  width: 96px;
-  height: 96px;
+  width: 116px;
+  height: 116px;
   margin-bottom: 12px;
   animation: hex-pulse 2.5s ease-in-out infinite;
   filter: drop-shadow(0 0 30px rgba(0, 229, 255, 0.4));

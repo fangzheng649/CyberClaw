@@ -19,9 +19,6 @@
     <filter id="dropBlur" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="2.2"/></filter>
     <filter id="plateDrop" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="5"/></filter>
   </defs>
-  <path d="M60.0,-3.8 L117.2,24.8 L117.2,87.2 L60.0,115.8 L2.8,87.2 L2.8,24.8 Z" fill="none" stroke="#0fd9ff" stroke-width="0.5" opacity="0.05"/>
-  <path d="M60.0,-13.0 L126.0,20.0 L126.0,92.0 L60.0,125.0 L-6.0,92.0 L-6.0,20.0 Z" fill="none" stroke="#0fd9ff" stroke-width="0.5" opacity="0.05"/>
-  <path d="M60.0,-23.1 L135.7,14.7 L135.7,97.3 L60.0,135.1 L-15.7,97.3 L-15.7,14.7 Z" fill="none" stroke="#0fd9ff" stroke-width="0.5" opacity="0.05"/>
   <ellipse cx="62" cy="52" rx="64" ry="64" fill="#00e5ff" opacity="0.12" filter="url(#bloom)"/>
   <ellipse cx="50" cy="76" rx="44" ry="44" fill="#00ff88" opacity="0.10" filter="url(#bloom)"/>
   <ellipse cx="60" cy="62" rx="46" ry="46" fill="url(#core)"/>
