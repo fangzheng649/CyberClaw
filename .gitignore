@@ -57,6 +57,7 @@ snapshot-*.txt
 *.bak
 *.swp
 *~
+docs/temp_*.txt
 
 # ── IDE / OS ──────────────────────────────────────────────────
 .vscode/
@@ -70,6 +71,8 @@ ehthumbs.db
 # ── Claude Code / AI 工具 ────────────────────────────────────
 .claude/
 .superpowers/
+.agents/
+skills-lock.json
 
 # ── 参考代码（不属于项目）──────────────────────────────────────
 reference/
