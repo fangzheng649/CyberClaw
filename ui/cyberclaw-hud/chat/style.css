@@ -126,6 +126,7 @@ body {
 }
 
 .brand-accent { color: var(--accent); }
+.brand-logo { height: 26px; width: auto; flex-shrink: 0; filter: drop-shadow(0 0 6px rgba(0,229,255,0.35)); }
 
 .brand-sub {
   font-size: 10px;

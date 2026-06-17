@@ -112,7 +112,8 @@ button, input { font: inherit; }
   z-index: 10;
 }
 
-.topbar-brand { flex-shrink: 0; }
+.topbar-brand { flex-shrink: 0; display: flex; align-items: center; gap: 12px; }
+.brand-logo { height: 38px; width: auto; flex-shrink: 0; filter: drop-shadow(0 0 8px rgba(0,229,255,0.35)); }
 
 .brand {
   font-family: var(--display);
@@ -785,6 +786,14 @@ button, input { font: inherit; }
 @keyframes hex-pulse {
   0%, 100% { opacity: 0.08; transform: scale(1) rotate(0deg); }
   50% { opacity: 0.2; transform: scale(1.08) rotate(30deg); }
+}
+
+.loading-logo {
+  width: 96px;
+  height: 96px;
+  margin-bottom: 12px;
+  animation: hex-pulse 2.5s ease-in-out infinite;
+  filter: drop-shadow(0 0 30px rgba(0, 229, 255, 0.4));
 }
 
 .loading-mark {

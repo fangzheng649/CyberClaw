@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="icon" type="image/svg+xml" href="/cyberclaw-logo.svg" />
   </head>
   <body>
     <div id="app">
@@ -24,8 +25,11 @@
       <!-- Top Security Metrics Bar -->
       <header class="topbar panel">
         <div class="topbar-brand">
-          <p class="eyebrow">IoT Security Command Deck</p>
-          <h1 class="brand">CYBER<span class="brand-accent">CLAW</span></h1>
+          <img src="/cyberclaw-logo.svg" alt="CyberClaw" class="brand-logo" />
+          <div class="brand-text">
+            <p class="eyebrow">IoT Security Command Deck</p>
+            <h1 class="brand">CYBER<span class="brand-accent">CLAW</span></h1>
+          </div>
         </div>
         <div class="topbar-stats">
           <div class="metric" id="metric-threat-level">
@@ -121,7 +125,7 @@
 
       <!-- Loading Screen -->
       <div id="loading" class="loading-screen">
-        <div class="loading-hex">⬡</div>
+        <img src="/cyberclaw-logo.svg" alt="CyberClaw" class="loading-logo" />
         <div class="loading-mark">CYBERCLAW</div>
         <div class="loading-sub">IoT Security Intelligence Platform</div>
         <div class="loading-bar"><span id="loading-progress"></span></div>

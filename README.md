@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⬡ CyberClaw
+# <img src="docs/cyberclaw-logo-enhanced.svg" width="44" alt="CyberClaw"> CyberClaw
 
 **IoT 全链路安全自动化平台**
 

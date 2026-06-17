@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -12 144 144" fill="none" role="img" aria-label="CyberClaw">
+  <title>CberClaw</title>
+  <defs>
+    <radialGradient id="void" cx="50%" cy="40%" r="78%"><stop offset="0%" stop-color="#0d2233"/><stop offset="55%" stop-color="#070d17"/><stop offset="100%" stop-color="#03050a"/></radialGradient>
+    <radialGradient id="plateFace" cx="50%" cy="34%" r="80%"><stop offset="0%" stop-color="#27405a"/><stop offset="58%" stop-color="#16263c"/><stop offset="100%" stop-color="#070d16"/></radialGradient>
+    <linearGradient id="chamfer" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f2faff"/><stop offset="22%" stop-color="#c3d4e6"/><stop offset="50%" stop-color="#6c8095"/><stop offset="78%" stop-color="#243447"/><stop offset="100%" stop-color="#070c14"/></linearGradient>
+    <linearGradient id="clawLen" gradientUnits="userSpaceOnUse" x1="98" y1="6" x2="16" y2="116"><stop offset="0%" stop-color="#67e8ff"/><stop offset="34%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#00ff88"/></linearGradient>
+    <linearGradient id="clawBright" gradientUnits="userSpaceOnUse" x1="98" y1="6" x2="16" y2="116"><stop offset="0%" stop-color="#b8f6ff"/><stop offset="40%" stop-color="#19efff"/><stop offset="100%" stop-color="#5cff9e"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#9ff4ff"/><stop offset="55%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#00ff88"/></linearGradient>
+    <radialGradient id="core" cx="50%" cy="60%" r="58%"><stop offset="0%" stop-color="#00ffd0" stop-opacity="0.8"/><stop offset="55%" stop-color="#00e5ff" stop-opacity="0.22"/><stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="specHot"><stop offset="0%" stop-color="#ffffff" stop-opacity="1"/><stop offset="100%" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="sheen0" gradientUnits="userSpaceOnUse" x1="74" y1="5" x2="80" y2="15"><stop offset="0%" stop-color="#dffbff" stop-opacity="0.75"/><stop offset="38%" stop-color="#ffffff" stop-opacity="0.12"/><stop offset="60%" stop-color="#001016" stop-opacity="0.0"/><stop offset="100%" stop-color="#000508" stop-opacity="0.7"/></linearGradient>
+    <linearGradient id="sheen1" gradientUnits="userSpaceOnUse" x1="84" y1="22" x2="90" y2="32"><stop offset="0%" stop-color="#dffbff" stop-opacity="0.75"/><stop offset="38%" stop-color="#ffffff" stop-opacity="0.12"/><stop offset="60%" stop-color="#001016" stop-opacity="0.0"/><stop offset="100%" stop-color="#000508" stop-opacity="0.7"/></linearGradient>
+    <linearGradient id="sheen2" gradientUnits="userSpaceOnUse" x1="94" y1="40" x2="100" y2="50"><stop offset="0%" stop-color="#dffbff" stop-opacity="0.75"/><stop offset="38%" stop-color="#ffffff" stop-opacity="0.12"/><stop offset="60%" stop-color="#001016" stop-opacity="0.0"/><stop offset="100%" stop-color="#000508" stop-opacity="0.7"/></linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="1.8" result="b1"/><feMerge><feMergeNode in="b1"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="bigGlow" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="3.6"/></filter>
+    <filter id="bloom" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="10"/></filter>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="1.2" result="s"/><feMerge><feMergeNode in="s"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="dropBlur" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="2.2"/></filter>
+    <filter id="plateDrop" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="5"/></filter>
+  </defs>
+  <rect x="-12" y="-12" width="144" height="144" fill="url(#void)"/>
+  <path d="M60.0,-3.8 L117.2,24.8 L117.2,87.2 L60.0,115.8 L2.8,87.2 L2.8,24.8 Z" fill="none" stroke="#0fd9ff" stroke-width="0.5" opacity="0.05"/>
+  <path d="M60.0,-13.0 L126.0,20.0 L126.0,92.0 L60.0,125.0 L-6.0,92.0 L-6.0,20.0 Z" fill="none" stroke="#0fd9ff" stroke-width="0.5" opacity="0.05"/>
+  <path d="M60.0,-23.1 L135.7,14.7 L135.7,97.3 L60.0,135.1 L-15.7,97.3 L-15.7,14.7 Z" fill="none" stroke="#0fd9ff" stroke-width="0.5" opacity="0.05"/>
+  <ellipse cx="62" cy="52" rx="64" ry="64" fill="#00e5ff" opacity="0.12" filter="url(#bloom)"/>
+  <ellipse cx="50" cy="76" rx="44" ry="44" fill="#00ff88" opacity="0.10" filter="url(#bloom)"/>
+  <ellipse cx="60" cy="62" rx="46" ry="46" fill="url(#core)"/>
+  <path d="M60.0,5.4 L108.4,29.6 L108.4,82.4 L60.0,106.6 L11.6,82.4 L11.6,29.6 Z" transform="translate(0,4)" fill="#01040a" opacity="0.6" filter="url(#plateDrop)"/>
+  <path d="M60.0,5.4 L108.4,29.6 L108.4,82.4 L60.0,106.6 L11.6,82.4 L11.6,29.6 Z" fill="#02060c"/>
+  <path d="M60.0,5.4 L108.4,29.6 L108.4,82.4 L60.0,106.6 L11.6,82.4 L11.6,29.6 Z" fill="url(#chamfer)"/>
+  <path d="M60.0,10.0 L104.0,32.0 L104.0,80.0 L60.0,102.0 L16.0,80.0 L16.0,32.0 Z" fill="url(#plateFace)"/>
+  <polyline points="60,10 104,32 104,80" fill="none" stroke="#ffffff" stroke-width="1.8" opacity="0.85" stroke-linecap="round" filter="url(#soft)"/>
+  <polyline points="16,80 16,32 60,10" fill="none" stroke="#b9ccdf" stroke-width="1.1" opacity="0.6" stroke-linecap="round" filter="url(#soft)"/>
+  <path d="M60.0,15.5 L98.7,34.9 L98.7,77.1 L60.0,96.5 L21.3,77.1 L21.3,34.9 Z" fill="none" stroke="url(#rim)" stroke-width="2" stroke-linejoin="round" filter="url(#soft)"/>
+  <path d="M60.0,23.8 L90.8,39.2 L90.8,72.8 L60.0,88.2 L29.2,72.8 L29.2,39.2 Z" fill="none" stroke="#0fd9ff" stroke-width="0.6" opacity="0.20"/>
+  <circle cx="60" cy="10" r="2.8" fill="#bff8ff" filter="url(#soft)"/>
+  <circle cx="60" cy="10" r="1.1" fill="#ffffff"/>
+  <circle cx="104" cy="32" r="2.8" fill="#bff8ff" filter="url(#soft)"/>
+  <circle cx="104" cy="32" r="1.1" fill="#ffffff"/>
+  <circle cx="104" cy="80" r="2.8" fill="#86ffbb" filter="url(#soft)"/>
+  <circle cx="104" cy="80" r="1.1" fill="#ffffff"/>
+  <circle cx="60" cy="102" r="2.8" fill="#86ffbb" filter="url(#soft)"/>
+  <circle cx="60" cy="102" r="1.1" fill="#ffffff"/>
+  <circle cx="16" cy="80" r="2.8" fill="#86ffbb" filter="url(#soft)"/>
+  <circle cx="16" cy="80" r="1.1" fill="#ffffff"/>
+  <circle cx="16" cy="32" r="2.8" fill="#bff8ff" filter="url(#soft)"/>
+  <circle cx="16" cy="32" r="1.1" fill="#ffffff"/>
+  <polygon points="75.5,9.0 81.5,19.0 9.5,102.0" fill="#01040a" opacity="0.62" filter="url(#dropBlur)"/>
+  <polygon points="74.0,5.0 80.0,15.0 8.0,98.0" fill="#00e5ff" opacity="0.62" filter="url(#bigGlow)"/>
+  <polygon points="74.0,5.0 80.0,15.0 8.0,98.0" fill="url(#clawLen)"/>
+  <polygon points="74.0,5.0 80.0,15.0 8.0,98.0" fill="url(#sheen0)"/>
+  <polygon points="74.0,5.0 80.0,15.0 8.0,98.0" fill="none" stroke="#021018" stroke-width="1.4" stroke-linejoin="round" opacity="0.8"/>
+  <polygon points="64.0,22.2 67.0,27.2 31.0,68.7" fill="url(#clawBright)"/>
+  <polygon points="64.0,22.2 67.0,27.2 31.0,68.7" fill="url(#sheen0)" opacity="0.6"/>
+  <line x1="64.0" y1="22.2" x2="31.0" y2="68.7" stroke="#ffffff" stroke-width="1.1" stroke-linecap="round" opacity="0.95" filter="url(#soft)"/>
+  <circle cx="50.1" cy="41.7" r="3.4" fill="url(#specHot)"/>
+  <polygon points="85.5,26.0 91.5,36.0 21.5,114.0" fill="#01040a" opacity="0.62" filter="url(#dropBlur)"/>
+  <polygon points="84.0,22.0 90.0,32.0 20.0,110.0" fill="#00e5ff" opacity="0.62" filter="url(#bigGlow)"/>
+  <polygon points="84.0,22.0 90.0,32.0 20.0,110.0" fill="url(#clawLen)"/>
+  <polygon points="84.0,22.0 90.0,32.0 20.0,110.0" fill="url(#sheen1)"/>
+  <polygon points="84.0,22.0 90.0,32.0 20.0,110.0" fill="none" stroke="#021018" stroke-width="1.4" stroke-linejoin="round" opacity="0.8"/>
+  <polygon points="74.3,38.3 77.3,43.3 42.3,82.3" fill="url(#clawBright)"/>
+  <polygon points="74.3,38.3 77.3,43.3 42.3,82.3" fill="url(#sheen1)" opacity="0.6"/>
+  <line x1="74.3" y1="38.3" x2="42.3" y2="82.3" stroke="#ffffff" stroke-width="1.1" stroke-linecap="round" opacity="0.95" filter="url(#soft)"/>
+  <circle cx="60.9" cy="56.8" r="3.4" fill="url(#specHot)"/>
+  <polygon points="95.5,44.0 101.5,54.0 33.5,122.0" fill="#01040a" opacity="0.62" filter="url(#dropBlur)"/>
+  <polygon points="94.0,40.0 100.0,50.0 32.0,118.0" fill="#00e5ff" opacity="0.62" filter="url(#bigGlow)"/>
+  <polygon points="94.0,40.0 100.0,50.0 32.0,118.0" fill="url(#clawLen)"/>
+  <polygon points="94.0,40.0 100.0,50.0 32.0,118.0" fill="url(#sheen2)"/>
+  <polygon points="94.0,40.0 100.0,50.0 32.0,118.0" fill="none" stroke="#021018" stroke-width="1.4" stroke-linejoin="round" opacity="0.8"/>
+  <polygon points="84.7,54.7 87.7,59.7 53.7,93.7" fill="url(#clawBright)"/>
+  <polygon points="84.7,54.7 87.7,59.7 53.7,93.7" fill="url(#sheen2)" opacity="0.6"/>
+  <line x1="84.7" y1="54.7" x2="53.7" y2="93.7" stroke="#ffffff" stroke-width="1.1" stroke-linecap="round" opacity="0.95" filter="url(#soft)"/>
+  <circle cx="71.6" cy="71.0" r="3.4" fill="url(#specHot)"/>
+  <ellipse cx="60" cy="34" rx="46" ry="20" fill="#ffffff" opacity="0.06" filter="url(#bloom)"/>
+</svg>
