@@ -374,6 +374,39 @@ def _load_topology_devices() -> list[dict]:
         return []
 
 
+async def lookup_devices_by_ip(ips: list[str]) -> list[dict]:
+    """按 IP 查询设备(真实拓扑 topology.json + DB)，返回 name/type/vendor/mac。
+
+    供隔离等需确认目标设备的场景直接取真实设备数据，不依赖 nmap/iot_fingerprint
+    扫描——避免 lab 模式仿真数据或扫描失败导致拿不到设备信息、无法生成确认卡片。
+    """
+    result: list[dict] = []
+    topo_devices = _load_topology_devices()
+    db_devices: list = []
+    try:
+        from .nx_bridge import get_bridge
+        db_devices = await get_bridge().get_all_devices() or []
+    except Exception as e:
+        logger.debug(f"lookup_devices_by_ip DB query failed: {e}")
+
+    for ip in ips:
+        matched = next((d for d in topo_devices if d.get("ip") == ip), None)
+        if not matched:
+            d = next((x for x in db_devices if isinstance(x, dict) and x.get("devLastIP") == ip), None)
+            if d:
+                matched = {"name": d.get("devName", ""), "type": d.get("devType", ""),
+                           "vendor": d.get("devVendor", ""), "mac": d.get("devMac", "")}
+        if matched:
+            result.append({
+                "ip": ip,
+                "name": matched.get("name", ""),
+                "type": matched.get("type", ""),
+                "vendor": matched.get("vendor", ""),
+                "mac": matched.get("mac", ""),
+            })
+    return result
+
+
 def _mock_syslog_data() -> dict:
     """Generate mock syslog data based on topology devices."""
     devices = _load_topology_devices()
@@ -525,7 +558,9 @@ INTENT_TOOL_MAP = {
     ],
     r"隔离|isolat|封禁|block": [
         {"server": "auto-response", "tool": "get_response_status", "args": {}},
-        {"server": "nmap-scan", "tool": "iot_fingerprint", "args": {"target": _SUBNET}},
+        # 目标设备信息由 chat router 按消息中的 IP 从 topology/DB 注入
+        # (lookup_devices_by_ip)，不再用 iot_fingerprint 扫网段——避免 lab 模式
+        # 仿真数据/扫描失败导致无设备信息、LLM 不生成隔离确认卡片
     ],
     r"恢复|restore|解除|解封": [
         {"server": "auto-response", "tool": "get_response_status", "args": {}},

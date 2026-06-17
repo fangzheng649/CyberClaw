@@ -614,6 +614,24 @@ async def chat(req: ChatRequest) -> ChatResponse:
                         and not seen.add((r.get("server"), r.get("tool")))]
         steps = _build_steps_from_results(tool_results)
         is_report_request = any(r.get("tool") == "generate_report" for r in tool_results)
+        # 隔离意图：从消息提取 IP，查真实设备(topology/DB)注入结果，
+        # 让 LLM 据设备信息生成隔离确认卡片（不依赖 iot_fingerprint 扫描）
+        if re.search(r"隔离|isolat|封禁|block", req.message, re.IGNORECASE):
+            _ips = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", req.message)
+            if _ips:
+                from ..services.mcp_tool_service import lookup_devices_by_ip
+                _devs = await lookup_devices_by_ip(_ips)
+                if _devs:
+                    tool_results.append({
+                        "server": "device-config", "tool": "device_lookup",
+                        "result": {"devices": _devs, "matched_count": len(_devs),
+                                   "note": "目标设备已从拓扑/数据库确认，可生成隔离确认卡片"},
+                    })
+                    steps.append(AnalysisStep(
+                        tool="device-config/device_lookup",
+                        summary=f"设备查询 — 匹配 {len(_devs)} 台目标设备（"
+                                + ", ".join(d["name"] for d in _devs if d.get("name")) + "）",
+                    ))
         if is_report_request:
             tool_context = _format_report_context(tool_results)
         else:
