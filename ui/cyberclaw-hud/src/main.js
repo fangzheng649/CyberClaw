@@ -1353,6 +1353,30 @@ function handleWSMessage(msg) {
       });
       break;
     }
+
+    // ── CyberSense: 多源关联判定(syslog+snmp+ids 三源命中同一设备) ──
+    case 'cybersense_verdict': {
+      const v = msg;
+      // 设备变色(幂等: 与 suricata 单源同状态不冲突)
+      if (v.device_id || v.device_ip) {
+        const entry = state.devices.find(d => d.id === v.device_id)
+          || state.devices.find(d => d.payload?.ip === v.device_ip);
+        if (entry) updateDeviceStatus(entry.id, v.fsm_state || 'attacked');
+      }
+      const srcLabel = (v.sources_hit || []).join(' + ');
+      const conf = Math.round((v.confidence || 0) * 100);
+      showNotificationToast({
+        title: `🛡 CyberSense 多源关联: ${v.device_name || v.device_ip}`,
+        message: `判定 ${v.verdict || 'compromised'} · 置信度 ${conf}% · ${v.sources_count} 源: ${srcLabel}`,
+        severity: v.verdict === 'compromised' ? 'critical' : 'warning',
+      });
+      addAlert({
+        severity: v.verdict === 'compromised' ? 'critical' : 'warning',
+        message: `[CyberSense] ${v.device_name || v.device_ip} ${v.verdict || ''} (${conf}%, ${srcLabel})`,
+        type: 'cybersense_verdict',
+      });
+      break;
+    }
   }
 
   // Update step counter

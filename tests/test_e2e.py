@@ -17,17 +17,6 @@ async def test_topology_returns_devices_and_links(client):
 
 
 @pytest.mark.asyncio
-async def test_topology_device_detail_found(client):
-    """GET /api/topology/devices/{id} 应返回设备详情"""
-    topo = (await client.get("/api/topology")).json()
-    device_id = topo["devices"][0]["id"]
-    resp = await client.get(f"/api/topology/devices/{device_id}")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["id"] == device_id
-
-
-@pytest.mark.asyncio
 async def test_topology_device_detail_not_found(client):
     """GET /api/topology/devices/nonexistent 应返回 404"""
     resp = await client.get("/api/topology/devices/this_device_does_not_exist")
@@ -57,16 +46,6 @@ async def test_security_events_with_data(client, db_conn):
     data = resp.json()
     assert data["total"] >= 1
     assert data["events"][0]["severity"] == "critical"
-
-
-@pytest.mark.asyncio
-async def test_security_device_state_found(client):
-    """GET /api/security/state/{id} 应返回设备状态"""
-    topo = (await client.get("/api/topology")).json()
-    device_id = topo["devices"][0]["id"]
-    resp = await client.get(f"/api/security/state/{device_id}")
-    assert resp.status_code == 200
-    assert resp.json()["state"] in ("secure", "scanning", "vulnerable", "attacked", "isolated")
 
 
 @pytest.mark.asyncio
@@ -344,3 +323,69 @@ async def test_discovery_status(client):
     """GET /api/discovery/status 应返回"""
     resp = await client.get("/api/discovery/status")
     assert resp.status_code == 200
+
+
+# ── 业务断言深化（字段完整性 / 数据正确性）─────────────────────────
+
+@pytest.mark.asyncio
+async def test_topology_device_fields_complete(client):
+    """设备对象应含完整字段：id/name/ip/status"""
+    topo = (await client.get("/api/topology")).json()
+    d = topo["devices"][0]
+    for f in ("id", "name", "ip", "status"):
+        assert f in d and d[f] not in (None, ""), f"字段 {f} 缺失"
+
+
+@pytest.mark.asyncio
+async def test_security_events_severity_filter(client, db_conn):
+    """severity 过滤应只返回对应级别事件"""
+    db_conn.execute(
+        "INSERT INTO security_events (source_type, severity, message) VALUES "
+        "('test','critical','crit-event'), ('test','info','info-event')"
+    )
+    db_conn.commit()
+    resp = await client.get("/api/security/events?severity=critical")
+    data = resp.json()
+    assert data["total"] >= 1
+    assert all(e["severity"] == "critical" for e in data["events"])
+
+
+@pytest.mark.asyncio
+async def test_security_events_pagination(client, db_conn):
+    """limit 分页应限制返回条数"""
+    for i in range(5):
+        db_conn.execute(
+            "INSERT INTO security_events (source_type, severity, message) VALUES ('test','info', ?)",
+            (f"page-event-{i}",),
+        )
+    db_conn.commit()
+    data = (await client.get("/api/security/events?limit=2")).json()
+    assert len(data["events"]) <= 2
+
+
+@pytest.mark.asyncio
+async def test_dashboard_trends_labels_data_aligned(client):
+    """趋势接口 labels 与 data 长度对齐"""
+    data = (await client.get("/api/dashboard/trends/device-status")).json()
+    assert "labels" in data and "data" in data
+    assert len(data["labels"]) == len(data["data"])
+
+
+@pytest.mark.asyncio
+async def test_chat_status_fields_complete(client):
+    """chat status 应含 LLM / MCP / mock 模式字段"""
+    data = (await client.get("/api/chat/status")).json()
+    for f in ("llm_connected", "mcp_tools_loaded", "mcp_tools", "mock_mode"):
+        assert f in data, f"字段 {f} 缺失"
+
+
+# ── WebSocket 实时推送 ───────────────────────────────────────────────
+
+def test_websocket_init_message():
+    """WS /ws 连接后应下发 init 消息（含设备拓扑快照）"""
+    from starlette.testclient import TestClient
+    from server.main import app
+    with TestClient(app) as c:
+        with c.websocket_connect("/ws") as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "init"

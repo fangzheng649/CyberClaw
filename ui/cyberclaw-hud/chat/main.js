@@ -444,6 +444,27 @@ function startNotifWebSocket() {
           if (data.type === 'notification') {
             showNotifToast(data);
           }
+          // 改进2b: CyberSense 多源关联 → chat 界面 toast
+          if (data.type === 'cybersense_verdict') {
+            const conf = Math.round((data.confidence || 0) * 100);
+            const src = (data.sources_hit || []).join('+');
+            showNotifToast({
+              title: `CyberSense 多源关联: ${data.device_name || data.device_ip}`,
+              message: `判定 ${data.verdict || 'compromised'} · 置信度 ${conf}% · ${src}`,
+              severity: data.verdict === 'compromised' ? 'critical' : 'warning',
+            });
+          }
+          // 改进2a: 采集器事件 → Automate 卡片 count 实时 +1(无需刷新)
+          const _cmap = { syslog_event: 'syslog', snmp_trap: 'snmp', suricata_alert: 'suricata', mqtt_message: 'mqtt' };
+          const _cid = _cmap[data.type];
+          if (_cid) {
+            const _card = document.querySelector(`.collector-card[data-collector="${_cid}"]`);
+            const _cnt = _card && _card.querySelector('.cl-count');
+            if (_cnt) {
+              const _m = (_cnt.textContent || '').match(/(\d+)/);
+              _cnt.textContent = `${_m ? parseInt(_m[1]) + 1 : 1} 条`;
+            }
+          }
           // Route scenario & collector events to Dashboard for real-time refresh
           onDashboardMessage(data);
         } catch {}

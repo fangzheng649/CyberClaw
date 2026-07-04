@@ -117,6 +117,12 @@ scenario_service.set_topology(topology.devices, topology.links)
 
 async def broadcast_event(event_data: dict) -> None:
     await ws_manager.broadcast(event_data)
+    # CyberSense 多源关联: 拦截采集器事件(syslog/snmp/ids), 三源命中追加 cybersense_verdict
+    try:
+        from .services.cybersense import get_correlator
+        await get_correlator().on_ws_event(event_data)
+    except Exception:
+        pass
 
 
 async def heartbeat_loop():
@@ -165,6 +171,10 @@ get_suricata_service().set_broadcast(broadcast_event)
 
 # Wire auto-response engine broadcast (event-driven isolation)
 get_auto_response_service().set_broadcast(broadcast_event)
+
+# CyberSense correlator: 多源关联展示层聚合, 直接用 ws_manager 广播(不经 broadcast_event 避免递归)
+from .services.cybersense import get_correlator
+get_correlator().set_broadcast(ws_manager.broadcast)
 
 
 @asynccontextmanager
@@ -245,6 +255,24 @@ async def lifespan(app: FastAPI):
             logger.info(f"Local MQTT broker connect returned: {_r.get('status')} (ok if broker not running)")
     except Exception as _e:
         logger.debug(f"MQTT auto-connect skipped: {_e}")
+    # 自动启动三个采集器 receiver(演示用: syslog/snmp/suricata, 模仿 MQTT 自启)
+    try:
+        await get_receiver().start()
+        logger.info("Syslog receiver auto-started (UDP 8514)")
+    except Exception as _e:
+        logger.warning(f"Syslog receiver auto-start failed: {_e}")
+    try:
+        await get_snmp_service().start_trap_receiver()
+        logger.info("SNMP trap receiver auto-started (UDP 1162)")
+    except Exception as _e:
+        logger.warning(f"SNMP trap receiver auto-start failed: {_e}")
+    try:
+        _sur_svc = get_suricata_service()
+        _sur_svc.eve_json_path = Path(__file__).resolve().parent.parent / "lab" / "suricata_eve.json"
+        await _sur_svc.start()
+        logger.info(f"Suricata monitor auto-started on {_sur_svc.eve_json_path}")
+    except Exception as _e:
+        logger.warning(f"Suricata monitor auto-start failed: {_e}")
     # Mock 模式检测完成后，重新加载拓扑到 scenario_service
     # （模块加载时 get_topology() 在 mock 模式设置之前执行，数据不正确）
     topology = await async_get_topology()
