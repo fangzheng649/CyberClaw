@@ -13,6 +13,10 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3/dist/css/adminlte.min.css" />
     <!-- DataTables Bootstrap4 -->
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap4.min.css" />
+    <!-- 主题预置：CSS 加载前同步设置 data-theme，避免亮模式首屏闪烁 -->
+    <script>
+      (function(){try{var t=localStorage.getItem('cc_chat_theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+    </script>
     <!-- CyberClaw dark theme overrides (MUST load after AdminLTE) -->
     <link rel="stylesheet" href="style.css" />
     <link rel="stylesheet" href="../src/dashboard.css" />
@@ -34,6 +38,9 @@
           <button class="tab" data-tab="events">事件</button>
           <button class="tab" data-tab="automate">Automate</button>
         </nav>
+        <button class="theme-toggle" id="btn-theme-toggle" title="切换界面风格">
+          <i class="fa-solid fa-moon"></i>
+        </button>
         <button class="hud-link" id="btn-open-hud" title="打开 3D 安全 HUD">
           <span class="hud-link-icon">⬡</span> 3D HUD
         </button>

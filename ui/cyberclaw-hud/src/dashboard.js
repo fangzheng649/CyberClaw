@@ -14,11 +14,11 @@ const SEV_COLORS = { critical: '#ff2244', high: '#f97316', warning: '#eab308', m
 const FSM_COLORS = { secure: '#00ff88', scanning: '#00bbff', vulnerable: '#ffaa00', attacked: '#ff2244', isolated: '#5a6e88' };
 const SRC_ICONS = { syslog: 'SYS', snmp: 'SNP', mqtt: 'MQT', suricata: 'IDS', scenario: 'SCE' };
 const PROTO_COLORS = {
-  HTTP: '#00bbff', HTTPS: '#00e5ff',
-  MQTT: '#22c55e', COAP: '#4ade80',
-  MODBUS: '#f97316', S7COMM: '#fb923c', PROFINET: '#fdba74',
-  SSH: '#7c3aed', SNMP: '#a78bfa',
-  TCP: '#94a3b8', UDP: '#a1a1aa', ICMP: '#78716c',
+  HTTP: '#2563eb', HTTPS: '#3b82f6',
+  MQTT: '#0891b2', COAP: '#06b6d4',
+  MODBUS: '#f59e0b', S7COMM: '#f97316', PROFINET: '#fb923c',
+  SSH: '#6366f1', SNMP: '#8b5cf6',
+  TCP: '#0ea5e9', UDP: '#64748b', ICMP: '#64748b',
   OTHER: '#64748b',
 };
 
@@ -164,33 +164,33 @@ function renderAlertCountChart(d) {
   if (!c) return;
   const labels = (d.labels || []).map(l => l.slice(-5));
   c.setOption({
-    title: { text: '告警/小时', left: 'center', textStyle: { color: '#94a3b8', fontSize: 12 } },
+    title: { text: '告警/小时', left: 'center', textStyle: { color: '#64748b', fontSize:13 } },
     tooltip: {
       trigger: 'axis',
       backgroundColor: 'rgba(0,15,25,0.95)',
       borderColor: 'rgba(0,187,255,0.3)',
       borderWidth: 1,
-      textStyle: { color: '#cbd5e1', fontSize: 11 },
+      textStyle: { color: '#64748b', fontSize:13 },
     },
     legend: {
       data: ['critical', 'high', 'warning', 'medium', 'low', 'info'],
       top: 0, right: 0,
-      textStyle: { color: '#64748b', fontSize: 10 },
+      textStyle: { color: '#64748b', fontSize:12 },
       itemWidth: 12, itemHeight: 8,
     },
     grid: { left: 40, right: 16, top: 48, bottom: 28 },
     xAxis: {
       type: 'category', data: labels,
       axisLabel: {
-        color: '#64748b', fontSize: 9,
+        color: '#64748b', fontSize:11,
         interval: labels.length > 16 ? 2 : labels.length > 10 ? 1 : 0,
       },
-      axisLine: { lineStyle: { color: '#1e293b' } },
+      axisLine: { lineStyle: { color: '#94a3b8' } },
     },
     yAxis: {
       type: 'value', minInterval: 1,
       axisLabel: { color: '#64748b' },
-      splitLine: { lineStyle: { color: '#1e293b' } },
+      splitLine: { lineStyle: { color: '#94a3b8' } },
     },
     series: ['critical', 'high', 'warning', 'medium', 'low', 'info'].map(k => ({
       name: k, type: 'line', stack: 'total', smooth: true,
@@ -232,7 +232,7 @@ function renderProtocolChart(d) {
     title: {
       text: '协议分布',
       left: 'center',
-      textStyle: { color: '#94a3b8', fontSize: 12 },
+      textStyle: { color: '#64748b', fontSize:13 },
     },
     tooltip: {
       trigger: 'axis',
@@ -240,19 +240,19 @@ function renderProtocolChart(d) {
       backgroundColor: 'rgba(0,15,25,0.95)',
       borderColor: 'rgba(0,187,255,0.3)',
       borderWidth: 1,
-      textStyle: { color: '#cbd5e1', fontSize: 11 },
+      textStyle: { color: '#64748b', fontSize:13 },
     },
     grid: { left: 72, right: 48, top: 32, bottom: 12 },
     xAxis: {
       type: 'value',
-      axisLabel: { color: '#64748b', fontSize: 9 },
-      splitLine: { lineStyle: { color: '#1e293b' } },
+      axisLabel: { color: '#64748b', fontSize:11 },
+      splitLine: { lineStyle: { color: '#94a3b8' } },
     },
     yAxis: {
       type: 'category',
       data: names,
-      axisLabel: { color: '#94a3b8', fontSize: 10 },
-      axisLine: { lineStyle: { color: '#1e293b' } },
+      axisLabel: { color: '#64748b', fontSize:12 },
+      axisLine: { lineStyle: { color: '#94a3b8' } },
       axisTick: { show: false },
     },
     series: [{
@@ -268,8 +268,8 @@ function renderProtocolChart(d) {
       label: {
         show: true,
         position: 'right',
-        color: '#94a3b8',
-        fontSize: 10,
+        color: '#64748b',
+        fontSize:12,
       },
     }],
   });

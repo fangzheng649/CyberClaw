@@ -5,6 +5,27 @@
 import { initDashboard, onDashboardMessage } from '../src/dashboard.js';
 import { saveState, loadState, onStateChange, KEYS } from '../shared/state-sync.js';
 
+// ── 主题切换（赛博黑 / 稳重白蓝）─────────────────────────────────
+// 首屏 data-theme 已由 index.html <head> 内联脚本预置，此处仅负责按钮交互。
+(function initThemeToggle() {
+  const root = document.documentElement;
+  const KEY = 'cc_chat_theme';
+  const btn = document.getElementById('btn-theme-toggle');
+  if (!btn) return;
+  const icon = btn.querySelector('i');
+  const syncIcon = () => {
+    if (icon) icon.className = (root.getAttribute('data-theme') === 'light')
+      ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+  };
+  syncIcon();
+  btn.addEventListener('click', () => {
+    const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem(KEY, next);
+    syncIcon();
+  });
+})();
+
 // ── Session Storage Keys ──────────────────────────────────────────
 const SESSIONS_KEY = 'cc_chat_sessions';
 const CURRENT_SESSION_KEY = 'cc_current_session';
@@ -75,7 +96,7 @@ const state = {
   eventsSortKey: 'timestamp',
   eventsSortDir: 'desc',
   eventsPage: 0,
-  eventsPageSize: 30,
+  eventsPageSize: 15,
   _expandedEvt: null,
   selectedDeviceIndex: -1,
   devicePanelTab: 'overview',
@@ -894,7 +915,7 @@ const PRESET_TASKS = [
   { id: 'cve_check', name: 'CVE 漏洞检查', icon: 'fa-solid fa-shield-halved',
     color: '#ff2244', desc: '检查已知 CVE 漏洞，关注高危设备', defaultInterval: 3600 },
   { id: 'baseline_check', name: '安全基线检查', icon: 'fa-solid fa-list-check',
-    color: '#00ff88', desc: '审计设备安全配置与合规基线', defaultInterval: 1800 },
+    color: 'var(--accent)', desc: '审计设备安全配置与合规基线', defaultInterval: 1800 },
   { id: 'traffic_analysis', name: '流量分析', icon: 'fa-solid fa-chart-line',
     color: '#ffaa00', desc: '分析网络流量，提取 IoC 与异常指标', defaultInterval: 600 },
   { id: 'config_audit', name: '配置审计', icon: 'fa-solid fa-gear',
@@ -1155,7 +1176,7 @@ async function handleTaskAction(taskId, action) {
       // Show "已完成" briefly before refresh
       if (triggerBtn) {
         triggerBtn.textContent = '已完成 ✓';
-        triggerBtn.style.color = '#00ff88';
+        triggerBtn.style.color = 'var(--accent)';
         await new Promise(r => setTimeout(r, 1500));
       }
     }
@@ -1448,7 +1469,7 @@ async function handleConfirm(action, btn) {
 
       if (data.task_id || data.status === 'started') {
         confirmCard.innerHTML = `
-          <div class="confirm-title" style="color:#00ff88">✓ 隔离完成</div>
+          <div class="confirm-title" style="color:var(--accent)">✓ 隔离完成</div>
           <div class="confirm-details">
             <div>设备 <strong>${escapeHtml(deviceIp)}</strong> 网络封禁规则已生效</div>
             <div class="iso-verify">✓ 隔离验证通过：ping 不可达，端口无响应</div>
@@ -1559,7 +1580,7 @@ const COLLECTORS = [
   { id: 'syslog', name: 'Syslog', icon: 'fa-solid fa-scroll', color: '#00bbff',
     startApi: '/api/tools/collector/start', stopApi: '/api/tools/collector/stop', statusApi: '/api/tools/collector/status',
     startBody: { port: 8514 }, statusField: 'is_running', countField: 'stored_events', label: 'UDP 8514' },
-  { id: 'snmp', name: 'SNMP Trap', icon: 'fa-solid fa-network-wired', color: '#00ff88',
+  { id: 'snmp', name: 'SNMP Trap', icon: 'fa-solid fa-network-wired', color: 'var(--accent)',
     startApi: '/api/tools/snmp/start', stopApi: '/api/tools/snmp/stop', statusApi: '/api/tools/snmp/status',
     startBody: { port: 1162 }, statusField: 'trap_receiver_running', countField: 'traps_stored', label: 'UDP 1162' },
   { id: 'mqtt', name: 'MQTT', icon: 'fa-solid fa-tower-broadcast', color: '#eab308',
