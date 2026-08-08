@@ -180,44 +180,43 @@ async def test_scan_service_skips_non_device_events(monkeypatch):
     assert sent == []
 
 
-async def test_process_results_rebuilds_topology_on_new_device_even_in_real_mode(monkeypatch):
-    """real 模式下发现新真实设备也要广播 mode_changed（拓扑全量重建）。
+async def test_process_results_broadcasts_device_discovered_on_new_device(monkeypatch):
+    """real 模式发现新真实设备 → 增量广播 device_discovered。
 
-    根因：视图层在 real 模式 + 无真实设备时会回退显示 mock（async_get_topology 的
-    has_real=False 分支）。断网后 mode=real 但 HUD 显示 mock；联网发现真实设备时
-    is_mock_mode()=False → _maybe_switch_to_real 不触发 → 不广播 mode_changed →
-    mock 没清空，device_discovered 又把真实设备叠上去 → 重叠。修复：发现 New Device
-    就广播一次 real 全量快照重建，与 mode 标志解耦。
+    mock/real 改为手动 Shift 切换后，扫描不再自动切模式、不再广播 mode_changed
+    重建（real 模式不显示 mock，无重叠）；设备发现只走 device_discovered 增量。
     """
     from server.services import topology_service as ts
     from server.services import scan_service as ss
 
-    ts.set_mock_mode(False)  # real 模式 → _maybe_switch_to_real 会返回 False
+    ts.set_mock_mode(False)
     svc = ss.ScanService()
+    sent = []
+
+    async def fake_broadcast(msg):
+        sent.append(msg)
+
+    svc.set_broadcast(fake_broadcast)
 
     async def fake_populate(results, source="SCAN"):
         pass
 
-    async def fake_process():  # 产出一个 New Device 事件
+    async def fake_process():
         return [{"type": "New Device", "mac": "60:a3:e3:61:81:0f", "ip": "192.168.1.1"}]
 
     async def fake_enrich(self, events):
         return events
 
-    async def fake_broadcast_events(self, events):
-        pass
-
-    bm = {"calls": 0}
-
-    async def fake_broadcast_mode_changed(mode, reason):
-        bm["calls"] += 1
+    async def fake_resolve(self, mac):
+        return {"devName": "TL-SG2210LPF", "devType": "switch",
+                "devStatus": "secure", "devLastIP": "192.168.1.1"}
 
     monkeypatch.setattr("server.services.process_scan.populate_current_scan", fake_populate)
     monkeypatch.setattr("server.services.process_scan.process_scan_results", fake_process)
     monkeypatch.setattr(ss.ScanService, "_enrich_device_fingerprints", fake_enrich)
-    monkeypatch.setattr(ss.ScanService, "_broadcast_device_events", fake_broadcast_events)
-    monkeypatch.setattr(ss, "_broadcast_mode_changed", fake_broadcast_mode_changed)
+    monkeypatch.setattr(ss.ScanService, "_resolve_device", fake_resolve)
 
     await svc._process_results([{"ip": "192.168.1.1", "mac": "60:a3:e3:61:81:0f"}])
 
-    assert bm["calls"] == 1, "real 模式发现新真实设备也应广播拓扑重建(清空视图层 mock)"
+    assert any(m["type"] == "device_discovered" for m in sent), "应增量广播 device_discovered"
+    assert all(m["type"] != "mode_changed" for m in sent), "不应再广播 mode_changed(手动 Shift 切换)"

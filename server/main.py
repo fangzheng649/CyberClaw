@@ -18,7 +18,7 @@ from .api.scenario import router as scenario_router, set_scenario_service
 from .api.chat import router as chat_router
 from .api.tools import router as tools_router
 from .api.discovery import router as discovery_router
-from .services.topology_service import get_topology, async_get_topology, is_mock_mode
+from .services.topology_service import get_topology, async_get_topology, is_mock_mode, set_mock_mode
 from .services.scenario_service import ScenarioService
 from .services.tool_broadcast_service import set_broadcast as set_tool_broadcast
 from .services.collector_service import get_receiver
@@ -38,74 +38,6 @@ from .websocket.events import ConnectionManager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-async def _detect_and_set_mode(bridge):
-    """After initial scan, check if real devices are online.
-    If none found → switch to mock mode (re-seed DB with demo devices).
-    If devices found → ensure real mode.
-    """
-    from .services.topology_service import set_mock_mode, is_mock_mode
-
-    # Wait up to 15s for initial scan to complete
-    scan_svc = get_scan_service()
-    for _ in range(15):
-        if scan_svc.get_status().get("stats", {}).get("cycles", 0) > 0:
-            break
-        await asyncio.sleep(1)
-
-    # Check DB: any REAL (non-mock) device with devPresentLastScan=1?
-    try:
-        db_devices = await bridge.get_all_devices()
-        any_online = any(
-            d.get("devPresentLastScan", 0) for d in (db_devices or [])
-            if isinstance(d, dict) and d.get("devDiscoveryMethod") != "mock"
-        )
-    except Exception:
-        any_online = False
-
-    if not any_online:
-        # No real devices → switch to mock mode
-        logger.info("No real devices online — switching to MOCK mode")
-        set_mock_mode(True)
-
-        # Re-seed DB with mock devices
-        try:
-            # Clear devices for re-seeding, but keep security_events (historical data)
-            from server.db.compat import get_temp_db_connection
-            conn = get_temp_db_connection()
-            conn.execute("DELETE FROM Devices")
-            conn.execute("DELETE FROM Events")
-            conn.commit()
-            conn.close()
-
-            # Re-seed from mock_topology.json
-            from server.services.db.seed_service import seed_from_config
-            # Temporarily reset config cache so seed reads mock file
-            from server.services import topology_service
-            topology_service._config_cache = None
-            await seed_from_config()
-            topology_service._config_cache = None  # clear again for fresh load
-            logger.info("DB re-seeded with mock demo devices")
-            # 广播 mode_changed 让已连接的前端主动切到 mock 视图（启动早期客户端兜底；
-            # 主要靠 /ws init 消息携带 mock_mode）
-            try:
-                from .services.topology_service import async_get_topology
-                _mt = await async_get_topology()
-                await ws_manager.broadcast({
-                    "type": "mode_changed",
-                    "mode": "mock",
-                    "reason": "no_real_devices",
-                    "mock_mode": True,
-                    "devices": _mt.model_dump()["devices"],
-                    "links": [{"from": l.from_, "to": l.to} for l in _mt.links],
-                })
-            except Exception as _e:
-                logger.debug(f"startup mode_changed(mock) broadcast skipped: {_e}")
-        except Exception as e:
-            logger.warning(f"Mock re-seed failed: {e}")
-    else:
-        logger.info("Real devices detected online — using REAL mode")
-        set_mock_mode(False)
 
 ws_manager = ConnectionManager()
 scenario_service = ScenarioService()
@@ -247,9 +179,9 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("SCAN_SUBNET not set and no subnet in topology.json — auto-scan disabled")
 
-    # 检测是否需要切换到 mock 模式
-    # 等待初始扫描完成后判断（最多等 15 秒）
-    await _detect_and_set_mode(bridge)
+    # 默认 real 模式：mock/real 由用户手动 Shift 切换，不再自动检测回退
+    set_mock_mode(False)
+    logger.info("Default mode: REAL（按 Shift 切换 mock/real）")
     # 自动连接本地 MQTT broker（ESP32 MQTT 自动发现的前提；不在则静默跳过，不影响现有功能）
     try:
         # 直接 paho connect（内部 connect_async + 2s wait，比 socket 前置探测可靠；
@@ -365,6 +297,28 @@ async def trigger_network_scan():
     device_back_online WebSocket 消息实时刷新 HUD。返回扫描到的设备数。
     """
     return await get_scan_service().trigger_scan()
+
+
+@app.post("/api/mode/toggle")
+async def toggle_mode():
+    """切换 mock/real 模式（HUD Shift 快捷键调用）。
+
+    real: 只显示扫描到的真实在线设备(无则空); mock: 显示演示拓扑。
+    广播 mode_changed + 新模式完整快照，前端 buildTopology 重建。
+    """
+    new_mock = not is_mock_mode()
+    set_mock_mode(new_mock)
+    topo = await async_get_topology()
+    await ws_manager.broadcast({
+        "type": "mode_changed",
+        "mode": "mock" if new_mock else "real",
+        "reason": "manual_toggle",
+        "mock_mode": new_mock,
+        "devices": topo.model_dump()["devices"],
+        "links": [{"from": l.from_, "to": l.to} for l in topo.links],
+    })
+    logger.info(f"Mode toggled → {'MOCK' if new_mock else 'REAL'}")
+    return {"mode": "mock" if new_mock else "real", "mock_mode": new_mock}
 
 
 @app.websocket("/ws")

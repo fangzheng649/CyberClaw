@@ -483,6 +483,10 @@ async def async_get_topology() -> TopologyResponse:
     The DB may lack devParentMAC for most devices, so we merge config links
     to preserve the tree hierarchy while using DB's real-time device statuses.
     """
+    # mock 模式（手动 Shift 切换）：直接返回 mock_topology.json 演示拓扑，不依赖 DB。
+    if is_mock_mode():
+        return _load_mock_topology() or TopologyResponse(devices=[], links=[])
+
     # 1. DB — via async bridge (the primary path)
     try:
         from ..services.nx_bridge import get_bridge
@@ -571,16 +575,6 @@ async def async_get_topology() -> TopologyResponse:
                         if key not in seen_links:
                             seen_links.add(key)
                             links.append(LinkResponse(from_=parent_id, to=_dev_id))
-
-            # 只有 DB 完全没有真实(非mock)设备时才回退 mock 演示拓扑。
-            # 真实设备存在但短暂离线(ESP32 watchdog 误判 / config 扫描间隙)时不回退，
-            # 否则前端会在 real/mock 间频繁跳动（INFECTED 总数忽大忽小）。
-            has_real = any(isinstance(d, dict) and d.get("devDiscoveryMethod") != "mock"
-                           for d in db_devices)
-            if not has_real and len(db_devices) > 0:
-                mock_topo = _load_mock_topology()
-                if mock_topo:
-                    return mock_topo
 
             # 真实模式：过滤掉 mock 演示设备 + 离线(present=0 → online=False)的真实设备。
             # 离线设备不返回，与扫描时 device_offline 的前端移除一致 —— 否则按 S 断网把设备

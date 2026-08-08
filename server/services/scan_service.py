@@ -165,25 +165,6 @@ def _arp_table_scan(subnet: str) -> list[dict]:
     } for ip, mac in _parse_arp_output(text, network)]
 
 
-async def _broadcast_mode_changed(mode: str, reason: str):
-    """广播 mode_changed 让前端主动切换视图（无需刷新页面）。
-    携带 async_get_topology 完整快照，前端 buildTopology 重建。"""
-    try:
-        from server.services.tool_broadcast_service import _broadcast as _tb
-        from server.services.topology_service import async_get_topology
-        topo = await async_get_topology()
-        await _tb({
-            "type": "mode_changed",
-            "mode": mode,
-            "reason": reason,
-            "mock_mode": (mode == "mock"),
-            "devices": topo.model_dump()["devices"],
-            "links": [{"from": l.from_, "to": l.to} for l in topo.links],
-        })
-    except Exception as e:
-        logger.debug(f"mode_changed broadcast failed: {e}")
-
-
 # ---------------------------------------------------------------------------
 # Scan event → HUD WS message mapping
 # ---------------------------------------------------------------------------
@@ -399,22 +380,12 @@ class ScanService:
 
         if events:
             logger.info(f"Scan pipeline produced {len(events)} events")
-            has_new = any(e.get("type") == "New Device" for e in events)
-            # If a real device just appeared while in mock mode, switch to real FIRST
-            # (drops demo devices; lets preset/fingerprint run against topology.json).
-            switched = await self._maybe_switch_to_real(events)
             # Fingerprint/preset new+unknown devices BEFORE broadcasting, so the HUD's
             # first frame already shows the right type (frontend dedups by id).
             events = await self._enrich_device_fingerprints(events)
-            # 发现新真实设备 → 广播 real 拓扑全量快照，前端 buildTopology 清空重建。
-            # 不能只看 mode 标志(switched)：视图层在 real 模式 + 无真实设备时会回退显示
-            # mock(async_get_topology 的 has_real=False 分支)，此时 mode 仍是 real、
-            # _maybe_switch_to_real 不触发，但前端必须重建才能清掉 mock、避免与真实设备重叠。
-            if has_new or switched:
-                await _broadcast_mode_changed("real", "real_device_discovered")
-            # Push device-list-changing events (new / offline / reconnected) to the
-            # HUD as device_discovered / device_offline / device_back_online — the WS
-            # types the frontend already handles (mirrors the MQTT discovery path).
+            # mock/real 由用户手动 Shift 切换，扫描不再自动切模式。real 模式不显示 mock
+            # (async_get_topology 过滤 mock)，故设备发现只需增量广播 device_discovered /
+            # device_offline / device_back_online，不会与 mock 设备重叠。
             await self._broadcast_device_events(events)
 
     async def _resolve_device(self, mac: str) -> dict | None:
@@ -426,24 +397,6 @@ class ScanService:
             return await get_bridge().get_device_by_mac(mac)
         except Exception:
             return None
-
-    async def _maybe_switch_to_real(self, events: list[dict]) -> bool:
-        """Flip mock→real when a real device is discovered mid-session.
-
-        The startup detector and the MQTT/ESP32 path handle the normal cases; this
-        covers a generic scanned device appearing after startup while still in mock
-        mode. Switching makes the HUD drop the demo devices (the mode_changed
-        rebuild filters mock devices) and lets the preset/fingerprint enrichment
-        run against topology.json (real-mode preset index).
-        """
-        if not is_mock_mode():
-            return False
-        if not any(e.get("type") == "New Device" for e in events):
-            return False
-        from .topology_service import set_mock_mode
-        set_mock_mode(False)
-        logger.info("Real device discovered while in MOCK mode — switching to REAL")
-        return True
 
     async def _enrich_device_fingerprints(self, events: list[dict]) -> list[dict]:
         """Port-fingerprint new + backfill devices BEFORE broadcast (pillar 3).
@@ -467,7 +420,10 @@ class ScanService:
             for evt in events:
                 if evt.get("type") == "New Device":
                     mac, ip = evt.get("mac", ""), evt.get("ip", "")
-                    if mac and ip and mac not in self._fingerprinted:
+                    # New Device 总是进入候选：create_new_groups 新建的设备 devName="(unknown)"，
+                    # 必须识别。不受 _fingerprinted 限制——否则同一 MAC 重新发现后 enrichment
+                    # 被跳过，devName/id 漂移，前端按 id 去重/渲染错乱。
+                    if mac and ip:
                         candidates.setdefault(mac, ip)
             try:
                 all_devs = await bridge.get_all_devices()
@@ -496,7 +452,7 @@ class ScanService:
                 profile = match_device_profile(mac, ip)
                 if profile:
                     presets.append((mac, profile))
-                elif len(probe_targets) < _FP_CAP:
+                elif len(probe_targets) < _FP_CAP and mac not in self._fingerprinted:
                     probe_targets[mac] = ip
 
             # 1. Apply known-device presets from topology.json (demo identity).
@@ -556,8 +512,8 @@ class ScanService:
     async def _broadcast_device_events(self, events: list[dict]) -> None:
         """Map scan pipeline events to HUD device WS messages and push them.
 
-        No-op when no broadcast callback is wired (tests, or before main.py
-        wiring). Silently skips events that don't change the device list.
+        No-op when no broadcast callback is wired. Silently skips events that
+        don't change the device list.
         """
         if not events or not self._broadcast:
             return

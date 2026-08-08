@@ -130,3 +130,26 @@ async def test_enrich_non_preset_device_falls_back_to_probe(monkeypatch):
     assert len(fake_bridge.upserts) == 1
     assert fake_bridge.upserts[0][1]["devType"] == "plc"
     assert fake_bridge.upserts[0][2] == "PORTFP"
+
+
+async def test_enrich_new_device_applies_preset_even_if_already_fingerprinted(monkeypatch):
+    """New Device 总套预设，不被 _fingerprinted 跳过。
+
+    回归：同一 MAC 删后重新发现（New Device），_fingerprinted 里已有它 → enrichment
+    跳过 → devName 留 "(unknown)" → id 漂移（mac 而非预设 slug）→ 前端去重/渲染错乱，
+    表现为"扫描发现新设备不上线、需刷新"。修复：New Device 恒进 candidate。
+    """
+    from server.services.scan_service import ScanService
+
+    fake_bridge = _FakeBridge()
+    monkeypatch.setattr("server.services.nx_bridge.get_bridge", lambda: fake_bridge)
+
+    svc = ScanService()
+    svc._fingerprinted.add("8c:22:d2:41:09:08")  # 模拟之前已识别过
+
+    await svc._enrich_device_fingerprints(
+        [{"type": "New Device", "mac": "8c:22:d2:41:09:08", "ip": "192.168.1.11"}])
+
+    assert len(fake_bridge.upserts) == 1, "New Device 即使在 _fingerprinted 中也应套预设"
+    assert fake_bridge.upserts[0][1]["devName"] == "DS-2CD1023G2-L-01"
+    assert fake_bridge.upserts[0][2] == "PROFILE"

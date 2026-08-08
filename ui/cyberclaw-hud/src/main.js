@@ -1145,13 +1145,7 @@ function handleWSMessage(msg) {
     case 'mode_changed': {
       buildTopology({ devices: msg.devices || [], links: msg.links || [] });
       if (msg.devices) updateMetrics(_countDeviceStatuses(msg.devices));
-      showNotificationToast({
-        title: msg.mode === 'real' ? '切换到真实模式' : '切换到演示模式',
-        message: msg.reason === 'esp32_arrival' ? '检测到 ESP32 接入'
-          : msg.reason === 'no_real_devices' ? '无真实设备在线'
-          : '拓扑已刷新',
-        severity: msg.mode === 'real' ? 'discovery' : 'info',
-      });
+      // 不弹提示：场景重建本身即视觉反馈
       break;
     }
 
@@ -1316,9 +1310,15 @@ function handleWSMessage(msg) {
         message: `Device ${verb}: ${dev.name || dev.ip || dev.mac} (${dev.device_type || dev.type || 'unknown'})`,
         type: msg.type,
       });
-      addDeviceToScene(dev);
-      // 设备发现波纹（设备位置双环扩散）+ 右上角 toast 通知
-      requestAnimationFrame(() => triggerDiscoveryWave(dev.id));
+      // 包一层 try：即使该设备渲染失败，也不影响 toast 提示，且错误进控制台便于诊断
+      try {
+        addDeviceToScene(dev);
+      } catch (err) {
+        console.error('[device_discovered] addDeviceToScene failed', dev, err);
+      }
+      requestAnimationFrame(() => {
+        try { triggerDiscoveryWave(dev.id); } catch (e) { console.error(e); }
+      });
       showNotificationToast({
         title: `${dev.name || dev.ip || dev.mac} 已发现`,
         message: `${dev.device_type || dev.type || 'device'} · ${dev.vendor || ''} ${dev.model || ''}`.trim(),
@@ -1554,10 +1554,27 @@ function _isTypingTarget(el) {
   return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable === true;
 }
 
-function onScanHotkey(e) {
-  if (e.ctrlKey || e.metaKey || e.altKey) return;   // 不拦截 Ctrl/Cmd+S 等
-  if (e.repeat) return;                              // 长按不重复触发
-  if (_isTypingTarget(e.target)) return;             // 在输入框/聊天打字时不触发
+async function toggleHudMode() {
+  try {
+    await fetch('/api/mode/toggle', { method: 'POST' });
+    // 不弹提示：HUD 场景重建（设备变化）即是切换的视觉反馈
+  } catch (e) {
+    console.error('Mode toggle failed:', e);
+    showNotificationToast({ title: '模式切换失败', message: String(e), severity: 'warning' });
+  }
+}
+
+function onKeyDown(e) {
+  // Shift 单独按下 → 切换 mock / real
+  if (e.key === 'Shift' && !e.repeat) {
+    e.preventDefault();
+    toggleHudMode();
+    return;
+  }
+  // S 键 → 扫描（排除所有修饰键，含 Shift，避免 Shift+S 误触）
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  if (e.repeat) return;
+  if (_isTypingTarget(e.target)) return;
   if ((e.key || '').toLowerCase() === SCAN_HOTKEY) {
     e.preventDefault();
     triggerHudScan();
@@ -1862,8 +1879,8 @@ async function boot() {
   animate();
   onResize();
   window.addEventListener('resize', onResize);
-  // 隐藏快捷键：按 S 触发一次手动网络扫描（扫描为手动模式，不再每 30s 自动扫）
-  window.addEventListener('keydown', onScanHotkey);
+  // 隐藏快捷键：按 S 触发一次手动网络扫描；按 Shift 切换 mock/real 模式
+  window.addEventListener('keydown', onKeyDown);
 }
 
 boot();

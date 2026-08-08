@@ -79,3 +79,18 @@ async def test_real_mode_does_not_fall_back_to_mock_when_only_offline_reals(monk
     assert topo.devices == []
     # 但没有回退到 mock 演示拓扑（mock 设备没冒出来）
     assert all(d.discovery_method != "mock" for d in topo.devices)
+
+
+async def test_mock_mode_returns_demo_topology_regardless_of_db(monkeypatch):
+    """mock 模式直接返回 mock_topology.json 演示设备，不依赖 DB（手动 Shift 切换）。"""
+    ts.set_mock_mode(True)
+    # 即使 DB 里有真实在线设备，mock 模式也只返回演示拓扑
+    monkeypatch.setattr(
+        "server.services.nx_bridge.get_bridge",
+        lambda: _FakeBridge([_dev("60:a3:e3:61:81:0f", "Real-Switch", "192.168.1.1",
+                                  present=1, method="arp_table", dtype="switch")]),
+    )
+    topo = await ts.async_get_topology()
+    # 返回的全是 mock 演示设备，不含 DB 里的真实设备
+    assert all(d.discovery_method == "mock" for d in topo.devices)
+    assert len(topo.devices) > 0  # mock_topology.json 有演示设备
