@@ -134,9 +134,13 @@ async def heartbeat_loop():
         try:
             from .services.topology_service import async_get_topology
             _hb_topo = await async_get_topology()
-            devices = [{"status": d.status} for d in _hb_topo.devices]
+            # id+status per device → lets the frontend reconcile stale FSM states every
+            # heartbeat (main.js does updateDeviceStatus on diff, no scene rebuild).
+            # New-device discovery is NOT done here (scan_service pushes device_discovered).
+            devices = [{"id": d.id, "status": d.status} for d in _hb_topo.devices]
         except Exception:
-            devices = scenario_service.get_devices()
+            devices = [{"id": d.get("id"), "status": d.get("status")}
+                       for d in scenario_service.get_devices()]
         if devices:
             stats = {
                 "secure": sum(1 for d in devices if d["status"] == "secure"),
@@ -148,6 +152,7 @@ async def heartbeat_loop():
             await ws_manager.broadcast({
                 "type": "heartbeat",
                 "stats": stats,
+                "devices": devices,  # lightweight [{id,status}] → HUD state self-heal
                 "scenarioRunning": scenario_service.running,
                 "step": scenario_service.step,
                 "totalSteps": scenario_service.get_status()["total_steps"],
@@ -161,6 +166,10 @@ set_tool_broadcast(broadcast_event)
 
 # Wire collector service broadcast
 get_receiver().set_broadcast(broadcast_event)
+
+# Wire scan service broadcast — scan-discovered/offline/reconnected devices are
+# pushed to the HUD as device_discovered/device_offline/device_back_online.
+get_scan_service().set_broadcast(broadcast_event)
 
 # Wire SNMP and MQTT service broadcasts
 get_snmp_service().set_broadcast(broadcast_event)
@@ -230,10 +239,11 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     if scan_subnet:
-        scan_interval = int(os.getenv("SCAN_INTERVAL", "300"))
+        scan_interval = int(os.getenv("SCAN_INTERVAL", "90"))
         scan_svc = get_scan_service()
         await scan_svc.start(subnet=scan_subnet, interval=scan_interval)
-        logger.info(f"Auto scan started: subnet={scan_subnet}, interval={scan_interval}s")
+        logger.info(f"Scan service started (manual mode): subnet={scan_subnet}; "
+                    f"subsequent scans triggered by HUD hotkey POST /api/scan/trigger")
     else:
         logger.warning("SCAN_SUBNET not set and no subnet in topology.json — auto-scan disabled")
 
@@ -345,6 +355,16 @@ app.include_router(dashboard_router)
 app.include_router(workflow_router)
 app.include_router(notification_router)
 app.include_router(scheduler_router)
+
+
+@app.post("/api/scan/trigger")
+async def trigger_network_scan():
+    """手动触发一次网络扫描（HUD 快捷键调用）。
+
+    扫描结果经 scan_service 处理后，通过 device_discovered / device_offline /
+    device_back_online WebSocket 消息实时刷新 HUD。返回扫描到的设备数。
+    """
+    return await get_scan_service().trigger_scan()
 
 
 @app.websocket("/ws")

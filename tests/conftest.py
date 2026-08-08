@@ -68,4 +68,7 @@ def setup_test_data(db_conn):
     # 测试后清理
     db_conn.execute("DELETE FROM security_events")
     db_conn.execute("DELETE FROM Events")
+    # 清理本 fixture 插入的 aa:bb:cc 测试设备，避免污染真实 DB（否则会在 HUD 上以
+    # 离线设备反复出现）。真实扫描发现的设备不受影响。
+    db_conn.execute("DELETE FROM Devices WHERE devMac LIKE 'aa:bb:cc:dd:ee%'")
     db_conn.commit()

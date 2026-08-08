@@ -1,10 +1,82 @@
 import json
 import logging
+import math
+import re
+import zlib
 from pathlib import Path
 
 from ..models.schemas import DeviceResponse, LinkResponse, TopologyResponse
 
 logger = logging.getLogger(__name__)
+
+# Placeholder devName values that mean "we don't actually know the name".
+# Such names must NOT be used as the device id, or every unnamed device collides
+# on the same id and only one can render on the HUD (addDeviceToScene dedups by
+# id). When the name is one of these, fall back to a MAC-derived id instead.
+_PLACEHOLDER_NAMES = {"", "(unknown)", "unknown", "none", "n/a"}
+
+
+def _device_id(name: str, mac: str) -> str:
+    """Authoritative device-id derivation, shared by every topology path
+    (_db_to_topology / async_get_topology) and the scan-discovered broadcast.
+
+    A meaningful name → slugified (historic behaviour). An absent/placeholder
+    name → MAC with colons stripped, so each device gets a unique id. Keeping
+    this in one place is what lets init-rebuild, heartbeat and device_discovered
+    agree on ids (otherwise the HUD dedups/overwrites the wrong node).
+    """
+    if name and name.strip().lower() not in _PLACEHOLDER_NAMES:
+        return name.lower().replace("-", "_").replace(" ", "_")
+    return (mac or "").replace(":", "")
+
+
+# ---------------------------------------------------------------------------
+# Device position resolution (pillar 1: fix overlapping discovered devices)
+# ---------------------------------------------------------------------------
+def _is_valid_pos(pos) -> bool:
+    """True when pos is a usable 3-number [x, y, z] coordinate."""
+    return (
+        isinstance(pos, (list, tuple))
+        and len(pos) == 3
+        and all(isinstance(c, (int, float)) and not isinstance(c, bool) for c in pos)
+    )
+
+
+def _layout_pos(mac: str) -> list[float]:
+    """Deterministic fallback position derived from a MAC address.
+
+    Dynamically-discovered devices have no configured position, so without this
+    they all stack at the origin. The full 32-bit crc32 seeds both angle and
+    radius, so distinct MACs land on distinct spots (collision-resistant) and
+    the same MAC always maps to the same spot (stable across reloads).
+    """
+    seed = zlib.crc32((mac or "").lower().encode()) & 0xFFFFFFFF
+    angle = (seed / 4294967295.0) * 2 * math.pi
+    radius = 8.0 + ((seed >> 16) % 120) / 10.0  # 8.0 .. 20.0
+    return [round(radius * math.cos(angle), 3), 0.0, round(radius * math.sin(angle), 3)]
+
+
+def _resolved_pos(pos_raw, mac: str) -> list[float] | None:
+    """Authoritative pos resolution shared by every topology path.
+
+    A valid stored coordinate passes through unchanged (so the mock/config
+    topology layout is never disturbed). A missing/invalid one falls back to
+    _layout_pos(mac). Returns None only when there is no MAC to hash.
+    """
+    if pos_raw is None:
+        parsed = None
+    elif isinstance(pos_raw, (list, tuple)):
+        parsed = list(pos_raw)
+    else:
+        try:
+            parsed = json.loads(pos_raw)
+            parsed = list(parsed) if isinstance(parsed, (list, tuple)) else None
+        except (ValueError, TypeError):
+            parsed = None
+    if _is_valid_pos(parsed):
+        return [float(parsed[0]), float(parsed[1]), float(parsed[2])]
+    return _layout_pos(mac) if mac else None
+
 
 # ── Load topology from JSON config ──────────────────────────────
 _CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "topology.json"
@@ -19,6 +91,7 @@ def set_mock_mode(enabled: bool):
     if _mock_mode != enabled:
         _mock_mode = enabled
         _config_cache = None
+        reset_profile_cache()  # preset index is mode-dependent (mock vs real topology)
         mode_str = "MOCK (demo)" if enabled else "REAL (live devices)"
         logger.info(f"Topology mode switched → {mode_str}")
 
@@ -46,6 +119,55 @@ def load_topology_config() -> dict:
         logger.error(f"Invalid topology config: {e}")
         _config_cache = {"network": {}, "devices": [], "links": []}
     return _config_cache
+
+
+# ---------------------------------------------------------------------------
+# Known-device profile (demo-oriented identity from topology.json)
+# ---------------------------------------------------------------------------
+_profile_cache: dict | None = None
+
+
+def reset_profile_cache() -> None:
+    """Drop the cached MAC/IP → profile index (mode switch / tests)."""
+    global _profile_cache
+    _profile_cache = None
+
+
+def _load_profile_index() -> dict:
+    """Build {mac_clean: device} and {ip: device} indexes from the topology
+    config (mode-aware). Cached for the process."""
+    global _profile_cache
+    if _profile_cache is not None:
+        return _profile_cache
+    by_mac: dict[str, dict] = {}
+    by_ip: dict[str, dict] = {}
+    try:
+        for d in load_topology_config().get("devices", []):
+            mac_clean = re.sub(r"[^a-f0-9]", "", (d.get("mac") or "").lower())
+            if mac_clean:
+                by_mac[mac_clean] = d
+            ip = (d.get("ip") or "").strip()
+            if ip:
+                by_ip[ip] = d
+    except Exception as e:
+        logger.debug(f"profile index build failed: {e}")
+    _profile_cache = {"mac": by_mac, "ip": by_ip}
+    return _profile_cache
+
+
+def match_device_profile(mac: str, ip: str) -> dict | None:
+    """Return the topology.json preset for a known device — by MAC (primary) or
+    IP (fallback). None when the device isn't in the preset topology. Used so a
+    discovered device instantly gets its known identity (name/type/vendor/...)
+    instead of waiting for a port probe, and survives seed/mode-switch races."""
+    idx = _load_profile_index()
+    mac_clean = re.sub(r"[^a-f0-9]", "", (mac or "").lower())
+    if mac_clean and mac_clean in idx["mac"]:
+        return idx["mac"][mac_clean]
+    ip = (ip or "").strip()
+    if ip and ip in idx["ip"]:
+        return idx["ip"][ip]
+    return None
 
 
 def _load_mock_topology() -> TopologyResponse | None:
@@ -291,15 +413,9 @@ def _db_to_topology() -> TopologyResponse | None:
             if isinstance(d, dict):
                 mac = d.get("devMac", "")
                 name = d.get("devName", "") or mac
-                dev_id = name.lower().replace("-", "_").replace(" ", "_") if name else mac.replace(":", "")
+                dev_id = _device_id(d.get("devName", ""), mac)
                 status = d.get("devStatus", "secure")
-                pos_raw = d.get("devPos", "")
-                pos = None
-                if pos_raw:
-                    try:
-                        pos = _json.loads(pos_raw) if isinstance(pos_raw, str) else pos_raw
-                    except (_json.JSONDecodeError, TypeError):
-                        pos = None
+                pos = _resolved_pos(d.get("devPos", ""), mac)
 
                 devices.append(DeviceResponse(
                     id=dev_id,
@@ -329,7 +445,7 @@ def _db_to_topology() -> TopologyResponse | None:
                 parent_id = mac_to_id.get(parent_mac.lower())
                 mac = d.get("devMac", "")
                 name = d.get("devName", "") or mac
-                dev_id = name.lower().replace("-", "_").replace(" ", "_") if name else mac.replace(":", "")
+                dev_id = _device_id(d.get("devName", ""), mac)
                 if parent_id and parent_id != dev_id:
                     links.append(LinkResponse(from_=parent_id, to=dev_id))
 
@@ -388,15 +504,9 @@ async def async_get_topology() -> TopologyResponse:
             for d in db_devices:
                 mac = d.get("devMac", "")
                 name = d.get("devName", "") or mac
-                dev_id = name.lower().replace("-", "_").replace(" ", "_") if name else mac.replace(":", "")
+                dev_id = _device_id(d.get("devName", ""), mac)
                 status = d.get("devStatus", "secure")
-                pos_raw = d.get("devPos", "")
-                pos = None
-                if pos_raw:
-                    try:
-                        pos = _json.loads(pos_raw) if isinstance(pos_raw, str) else pos_raw
-                    except (_json.JSONDecodeError, TypeError):
-                        pos = None
+                pos = _resolved_pos(d.get("devPos", ""), mac)
                 devices.append(DeviceResponse(
                     id=dev_id,
                     name=name or d.get("devLastIP", ""),
@@ -455,7 +565,7 @@ async def async_get_topology() -> TopologyResponse:
                     parent_id = mac_to_id.get(parent_mac.lower())
                     _mac = d.get("devMac", "")
                     _name = d.get("devName", "") or _mac
-                    _dev_id = _name.lower().replace("-", "_").replace(" ", "_") if _name else _mac.replace(":", "")
+                    _dev_id = _device_id(d.get("devName", ""), _mac)
                     if parent_id and parent_id != _dev_id:
                         key = (parent_id, _dev_id)
                         if key not in seen_links:
@@ -472,10 +582,12 @@ async def async_get_topology() -> TopologyResponse:
                 if mock_topo:
                     return mock_topo
 
-            # 真实模式（有非mock设备在线）：过滤掉 mock 演示设备，避免 mock/真实混杂显示。
-            # mock 数据仍保留在 DB，仅不在视图中渲染。
-            real_ids = {d.id for d in devices if d.discovery_method != "mock"}
-            devices = [d for d in devices if d.discovery_method != "mock"]
+            # 真实模式：过滤掉 mock 演示设备 + 离线(present=0 → online=False)的真实设备。
+            # 离线设备不返回，与扫描时 device_offline 的前端移除一致 —— 否则按 S 断网把设备
+            # 移除了，刷新页面 buildTopology 又会把它渲染回来（"删去的设备又出现"）。
+            # 注：has_real 上面按"设备存在"判断(不按在线)，故全部真实设备离线时也不回退 mock。
+            real_ids = {d.id for d in devices if d.discovery_method != "mock" and d.online}
+            devices = [d for d in devices if d.discovery_method != "mock" and d.online]
             links = [l for l in links if l.from_ in real_ids and l.to in real_ids]
             return TopologyResponse(devices=devices, links=links)
     except Exception as e:

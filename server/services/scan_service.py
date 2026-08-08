@@ -1,9 +1,16 @@
 """持续网络扫描服务 — 调用 ARP/Nmap 发现网络设备"""
 import asyncio
+import ipaddress
+import json
 import logging
+import platform
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from .topology_service import _device_id, _resolved_pos, is_mock_mode, match_device_profile
+from server.db.compat import NULL_EQUIVALENTS
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +41,34 @@ def _lookup_vendor_oui(mac: str) -> str:
     return _oui_cache.get(prefix, "")
 
 
+# Vendor strings that mean "we don't actually know the vendor" — treat as
+# no-vendor and fall back to the OUI DB. Lower-cased NULL_EQUIVALENTS so we
+# catch "Unknown"/"unknown"/"(unknown)"/"UNKNOWN"/"" uniformly. This fixes the
+# bug where nmap's literal "Unknown" (truthy) skipped the OUI fallback.
+_NULL_VENDOR = {str(x).strip().lower() for x in NULL_EQUIVALENTS if str(x).strip()}
+
+# Same source but keeps "" — used to decide whether a stored devType is
+# "unknown-ish" (incl. empty) and worth a fingerprint backfill.
+_NULL_TYPE = {str(x).strip().lower() for x in NULL_EQUIVALENTS}
+
+# Max devices port-fingerprinted per scan cycle (bounds latency + nmap subprocesses).
+_FP_CAP = 8
+
+
+def _resolve_vendor(raw: str, mac: str) -> str:
+    """Return a trustworthy vendor string.
+
+    A real vendor is kept as-is. A null-equivalent value (empty / Unknown /
+    (unknown) / ...) falls back to the IEEE OUI DB. Returns '' when neither
+    source knows the vendor (honest empty — never the "Unknown" placeholder),
+    which process_scan then treats as overwritable on the next real scan.
+    """
+    s = str(raw).strip() if raw is not None else ""
+    if s and s.lower() not in _NULL_VENDOR:
+        return s
+    return _lookup_vendor_oui(mac)
+
+
 # ---------------------------------------------------------------------------
 # MAC address normalisation — lowercase, colon-separated
 # ---------------------------------------------------------------------------
@@ -42,6 +77,92 @@ def _normalize_mac(raw_mac: str) -> str:
     if len(mac) == 12 and ":" not in mac:
         mac = ":".join(mac[i:i + 2] for i in range(0, 12, 2))
     return mac
+
+
+# ---------------------------------------------------------------------------
+# ARP-table discovery — reliable on Windows without admin / arp-scan / nmap
+# ---------------------------------------------------------------------------
+# `arp -a` line: "<ip>   <mac [-: separated]>   <type>". MAC must be 6 hex
+# octets with consistent separators; we then keep only entries whose IP is in
+# the target network and whose first octet is even (drops broadcast ff-.. and
+# multicast 01-.. / 33-..).
+_ARP_LINE_RE = re.compile(
+    r"(\d{1,3}(?:\.\d{1,3}){3})\s+([0-9A-Fa-f]{2}(?:[-:][0-9A-Fa-f]{2}){5})\s+\S+"
+)
+
+
+def _parse_arp_output(text: str, network: ipaddress.IPv4Network) -> list[tuple[str, str]]:
+    """Parse `arp -a` output → [(ip, mac)] for entries inside ``network``.
+
+    Excludes broadcast/multicast (first MAC octet odd) and entries on other
+    interfaces/subnets.
+    """
+    out: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        m = _ARP_LINE_RE.search(line)
+        if not m:
+            continue
+        ip_str, mac_raw = m.group(1), m.group(2)
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if ip not in network:
+            continue
+        if int(mac_raw.split(":" if ":" in mac_raw else "-")[0], 16) % 2 == 1:
+            # multicast / broadcast MAC — skip
+            continue
+        out.append((str(ip), _normalize_mac(mac_raw)))
+    return out
+
+
+def _arp_table_scan(subnet: str) -> list[dict]:
+    """Discover devices via the OS ARP table (Windows-friendly, no admin).
+
+    1) Parallel ICMP ping-sweep across the subnet to populate the ARP cache.
+    2) Read ``arp -a`` and parse IP→MAC.
+    3) Resolve vendor via the IEEE OUI DB.
+
+    This is the reliable path on Windows where ``arp-scan`` is not installed
+    and ``nmap -sn`` both times out (>120s on a /24) and misses ICMP-only hosts
+    such as IP cameras that drop nmap's TCP probes.
+    """
+    try:
+        network = ipaddress.ip_network(subnet, strict=False)
+    except ValueError:
+        return []
+
+    is_windows = platform.system() == "Windows"
+
+    def _ping(ip: str):
+        try:
+            cmd = ["ping", "-n", "1", "-w", "400", ip] if is_windows \
+                else ["ping", "-c", "1", "-W", "1", ip]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=3)
+        except Exception:
+            pass
+
+    try:
+        with ThreadPoolExecutor(max_workers=64) as ex:
+            list(ex.map(_ping, [str(h) for h in network.hosts()]))
+    except Exception as e:
+        logger.debug(f"ARP-table ping-sweep error: {e}")
+
+    try:
+        text = subprocess.check_output(["arp", "-a"], universal_newlines=True,
+                                       timeout=10, errors="replace")
+    except Exception as e:
+        logger.debug(f"arp -a failed: {e}")
+        return []
+
+    return [{
+        "ip": ip,
+        "mac": mac,
+        "vendor": _resolve_vendor("", mac),
+        "method": "arp_table",
+        "scanSourcePlugin": "ARPTABLE",
+    } for ip, mac in _parse_arp_output(text, network)]
 
 
 async def _broadcast_mode_changed(mode: str, reason: str):
@@ -63,18 +184,102 @@ async def _broadcast_mode_changed(mode: str, reason: str):
         logger.debug(f"mode_changed broadcast failed: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Scan event → HUD WS message mapping
+# ---------------------------------------------------------------------------
+# process_scan emits events keyed by eveEventType ("New Device", "Device Down",
+# "Down Reconnected", "Connected", "IP Changed", ...). The device-list-changing
+# ones are mapped here to the WS message types the frontend already handles —
+# the SAME contract as the MQTT discovery path (mqtt_service._upsert_esp32_device)
+# so no frontend change is needed to make scan-discovered devices appear.
+_EVENT_TO_WS = {
+    "New Device": "device_discovered",
+    "Down Reconnected": "device_back_online",
+    "Connected": "device_back_online",
+    "Device Down": "device_offline",
+}
+
+
+def _parse_pos(pos_raw) -> list | None:
+    """Parse devPos (JSON string / list / None) → list, else None."""
+    if pos_raw is None:
+        return None
+    if isinstance(pos_raw, (list, tuple)):
+        return list(pos_raw)
+    try:
+        parsed = json.loads(pos_raw)
+        return list(parsed) if isinstance(parsed, (list, tuple)) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def build_device_ws_message(event: dict, device: dict | None) -> dict | None:
+    """Map one process_scan device event + DB device row → a HUD WS message.
+
+    Returns None for events that must not trigger a device-list update.
+    Payload mirrors the MQTT device_discovered contract so the frontend's
+    existing device_discovered / device_back_online / device_offline handlers
+    render scan results without any frontend change.
+    """
+    ws_type = _EVENT_TO_WS.get(event.get("type", ""))
+    if not ws_type:
+        return None
+
+    mac = event.get("mac", "")
+    dev = device or {}
+    name = dev.get("devName") or mac
+    dev_id = _device_id(dev.get("devName", ""), mac)
+    ip = event.get("ip") or dev.get("devLastIP", "")
+
+    if ws_type == "device_offline":
+        # removeDeviceFromScene only needs id; keep the offline payload lean
+        return {"type": "device_offline",
+                "device": {"mac": mac, "id": dev_id, "name": name, "ip": ip}}
+
+    return {"type": ws_type, "device": {
+        "mac": mac,
+        "id": dev_id,
+        "name": name,
+        "ip": ip,
+        "type": dev.get("devType", "unknown"),
+        "device_type": dev.get("devType", "unknown"),
+        "vendor": dev.get("devVendor", ""),
+        "model": dev.get("devModel", ""),
+        "pos": _resolved_pos(dev.get("devPos"), mac),
+        "status": dev.get("devStatus", "secure"),
+    }}
+
+
 class ScanService:
     def __init__(self):
         self._running = False
         self._task = None
+        self._subnet = ""           # configured scan subnet (set on start)
+        self._interval = 300        # retained for status/logging; NOT used for looping in manual mode
+        self._scan_lock = asyncio.Lock()  # serialize startup scan vs manual triggers vs re-presses
         self._stats = {"cycles": 0, "devices_found": 0, "last_scan": ""}
+        self._broadcast = None  # ws broadcast callback (wired in main.py)
+        self._fingerprinted: set[str] = set()  # macs already port-fingerprinted this session
+
+    def set_broadcast(self, cb):
+        """Wire the WebSocket broadcast callback (same pattern as the other
+        collector services). Scan-detected device changes are pushed here."""
+        self._broadcast = cb
 
     async def start(self, subnet: str = "192.168.1.0/24", interval: int = 300):
+        """启动扫描服务（手动模式）。
+
+        启动时执行一次扫描；之后不再每 N 秒自动循环——所有后续扫描由用户在
+        HUD 按下快捷键、经 ``trigger_scan()`` 主动发起。``interval`` 仅作记录，
+        不再用于循环。
+        """
         if self._running:
             return {"status": "already_running"}
         self._running = True
-        self._task = asyncio.create_task(self._loop(subnet, interval))
-        return {"status": "started", "subnet": subnet, "interval": interval}
+        self._subnet = subnet
+        self._interval = interval
+        self._task = asyncio.create_task(self._startup_scan())
+        return {"status": "started", "subnet": subnet, "mode": "manual"}
 
     async def stop(self):
         self._running = False
@@ -89,75 +294,41 @@ class ScanService:
             "stats": self._stats,
         }
 
-    async def _loop(self, subnet: str, interval: int):
-        first = True
-        while self._running:
-            try:
-                result = await self.scan_subnet(subnet)
-                self._stats["cycles"] += 1
-                self._stats["devices_found"] = result.get("found", 0)
-                from datetime import datetime
-                self._stats["last_scan"] = datetime.now().isoformat()
-                if first:
-                    logger.info(f"Initial scan complete: found {result.get('found', 0)} devices")
-                    first = False
-                # After each scan, check if mode should switch
-                await self._check_mode_switch()
-            except Exception as e:
-                logger.error(f"Scan cycle error: {e}")
-            await asyncio.sleep(interval)
-
-    async def _check_mode_switch(self):
-        """已禁用：模式切换由 MQTT 发现(_upsert_esp32_device 驱动 mock→real)和启动
-        检测(_detect_and_set_mode)负责。原逻辑(DELETE Devices + seed)与 MQTT 驱动
-        冲突——会删掉刚被 MQTT 发现的 ESP32，导致 any_online=False 又切回 mock，循环。
-        scan_service 现在只负责扫描 + presence，不再切模式。"""
-        return
+    async def _startup_scan(self):
+        """启动时的一次性扫描（不循环）。"""
         try:
-            from .nx_bridge import get_bridge
-            from .topology_service import set_mock_mode, is_mock_mode, _config_cache
-            from server.db.compat import get_temp_db_connection
-
-            bridge = get_bridge()
-            db_devices = await bridge.get_all_devices()
-            if not db_devices:
-                return
-
-            any_online = any(
-                d.get("devPresentLastScan", 0) for d in db_devices
-                if isinstance(d, dict) and d.get("devDiscoveryMethod") != "mock"
-            )
-            currently_mock = is_mock_mode()
-
-            if any_online and currently_mock:
-                # Real device came online → switch to real mode
-                logger.info("Real device detected — switching from MOCK to REAL mode")
-                set_mock_mode(False)
-                # Re-seed with real devices
-                conn = get_temp_db_connection()
-                conn.execute("DELETE FROM Devices")
-                conn.commit()
-                conn.close()
-                from server.services.db.seed_service import seed_from_config
-                await seed_from_config()
-                await _broadcast_mode_changed("real", "scan_detected")
-
-            elif not any_online and not currently_mock:
-                # All devices went offline → switch to mock mode
-                logger.info("All devices offline — switching from REAL to MOCK mode")
-                set_mock_mode(True)
-                conn = get_temp_db_connection()
-                conn.execute("DELETE FROM Devices")
-                conn.execute("DELETE FROM Events")
-                conn.execute("DELETE FROM security_events")
-                conn.commit()
-                conn.close()
-                from server.services.db.seed_service import seed_from_config
-                await seed_from_config()
-                await _broadcast_mode_changed("mock", "no_real_devices")
-
+            await self._run_one_cycle(reason="startup")
         except Exception as e:
-            logger.debug(f"Mode switch check failed: {e}")
+            logger.error(f"Startup scan error: {e}")
+
+    async def _run_one_cycle(self, reason: str = "manual") -> dict:
+        """执行一次完整扫描并刷新统计。
+
+        ``_scan_lock`` 串行化，避免启动扫描与手动触发（或重复连按快捷键）并发
+        跑两份 arp/nmap 子进程。scan_subnet → _process_results 会把设备变更事件
+        经 device_discovered / device_offline / device_back_online 推送到 HUD。
+        """
+        async with self._scan_lock:
+            result = await self.scan_subnet(self._subnet)
+            self._stats["cycles"] += 1
+            self._stats["devices_found"] = result.get("found", 0)
+            from datetime import datetime
+            self._stats["last_scan"] = datetime.now().isoformat()
+            logger.info(f"Scan complete ({reason}): found {result.get('found', 0)} devices on {self._subnet}")
+            return result
+
+    async def trigger_scan(self) -> dict:
+        """用户快捷键手动触发一次网络扫描。
+
+        扫描结果经 ``_process_results`` 处理后，通过 ``_broadcast_device_events``
+        推送 device_discovered / device_offline / device_back_online，实时刷新 HUD
+        的设备列表与拓扑。返回扫描到的设备数与原始结果。
+        """
+        if not self._subnet:
+            return {"status": "error", "message": "scan subnet not configured"}
+        result = await self._run_one_cycle(reason="manual")
+        return {"status": "ok", "found": result.get("found", 0),
+                "devices": result.get("devices", [])}
 
     async def scan_subnet(self, subnet: str) -> dict:
         """执行一次 ARP + ICMP 扫描"""
@@ -183,9 +354,7 @@ class ScanService:
             )
             for m in pattern.finditer(output):
                 mac = _normalize_mac(m.group(2))
-                vendor = m.group(3).strip()
-                if not vendor:
-                    vendor = _lookup_vendor_oui(mac)
+                vendor = _resolve_vendor(m.group(3).strip(), mac)
                 results.append({
                     "ip": m.group(1),
                     "mac": mac,
@@ -200,52 +369,26 @@ class ScanService:
         except Exception as e:
             logger.debug(f"arp-scan error: {e}")
 
-        # ICMP ping 扫描（nmap -sn）
+        # ARP 表扫描（Windows/跨平台主路径）：并行 ICMP ping-sweep 填充 ARP 缓存后
+        # 读 arp -a。本机 arp-scan 未装、nmap -sn 既超时(208s>120s)又漏摄像头，
+        # 此法最可靠 —— ping 能通的设备其 MAC 都会在 ARP 表里。
         if not results:
-            try:
-                output = subprocess.check_output(
-                    ["nmap", "-sn", "-n", subnet],
-                    universal_newlines=True,
-                    timeout=120,
-                    stderr=subprocess.STDOUT,
-                )
-                ip_pattern = re.compile(
-                    r"Nmap scan report for (\d+\.\d+\.\d+\.\d+)"
-                )
-                mac_pattern = re.compile(
-                    r"MAC Address: ([0-9A-Fa-f:]{17}) \((.+?)\)"
-                )
-                current_ip = None
-                for line in output.splitlines():
-                    ip_match = ip_pattern.search(line)
-                    if ip_match:
-                        current_ip = ip_match.group(1)
-                    mac_match = mac_pattern.search(line)
-                    if mac_match and current_ip:
-                        mac = _normalize_mac(mac_match.group(1))
-                        vendor = mac_match.group(2)
-                        if not vendor:
-                            vendor = _lookup_vendor_oui(mac)
-                        results.append({
-                            "ip": current_ip,
-                            "mac": mac,
-                            "vendor": vendor,
-                            "method": "nmap_sn",
-                            "scanSourcePlugin": "NMAPSN",
-                        })
-                        current_ip = None
-            except FileNotFoundError:
-                logger.debug("nmap not available")
-            except Exception as e:
-                logger.debug(f"nmap scan error: {e}")
+            results = _arp_table_scan(subnet)
 
+        # NOTE: 不再用 nmap -sn 兜底。本机实测 nmap -sn 扫 /24 要 ~208s（timeout=120 必
+        # 超时）、还会漏掉 ICMP-only 的摄像头；更糟的是当 arp_table 因断网返回 [] 时，
+        # nmap 兜底会去扫一个无响应网段 ~120s 才超时 → trigger_scan 挂起，用户按 S 后迟迟
+        # 看不到"发现 N 台"。arp_table（ping-sweep + arp -a）覆盖 Windows、arp-scan 覆盖
+        # Linux；空结果即"确实没设备"，交给 _process_results 据此把真实设备标记离线。
         return results
 
     async def _process_results(self, results: list[dict]):
-        """将扫描结果送入处理管道"""
-        if not results:
-            return
+        """将扫描结果送入处理管道。
 
+        即使 results 为空也必须跑：populate_current_scan([]) 会清空 CurrentScan，
+        process_scan_results 的 presence 阶段据此把本次未扫到的真实设备标记为离线
+        (Device Down) → 广播 device_offline，让断网时 HUD 能反映设备失联。
+        """
         from server.services.process_scan import populate_current_scan, process_scan_results
 
         # Stage 0: Write scan results to CurrentScan temp table
@@ -256,14 +399,179 @@ class ScanService:
 
         if events:
             logger.info(f"Scan pipeline produced {len(events)} events")
-            # Broadcast events via WebSocket if available
+            has_new = any(e.get("type") == "New Device" for e in events)
+            # If a real device just appeared while in mock mode, switch to real FIRST
+            # (drops demo devices; lets preset/fingerprint run against topology.json).
+            switched = await self._maybe_switch_to_real(events)
+            # Fingerprint/preset new+unknown devices BEFORE broadcasting, so the HUD's
+            # first frame already shows the right type (frontend dedups by id).
+            events = await self._enrich_device_fingerprints(events)
+            # 发现新真实设备 → 广播 real 拓扑全量快照，前端 buildTopology 清空重建。
+            # 不能只看 mode 标志(switched)：视图层在 real 模式 + 无真实设备时会回退显示
+            # mock(async_get_topology 的 has_real=False 分支)，此时 mode 仍是 real、
+            # _maybe_switch_to_real 不触发，但前端必须重建才能清掉 mock、避免与真实设备重叠。
+            if has_new or switched:
+                await _broadcast_mode_changed("real", "real_device_discovered")
+            # Push device-list-changing events (new / offline / reconnected) to the
+            # HUD as device_discovered / device_offline / device_back_online — the WS
+            # types the frontend already handles (mirrors the MQTT discovery path).
+            await self._broadcast_device_events(events)
+
+    async def _resolve_device(self, mac: str) -> dict | None:
+        """Look up a device row by MAC for broadcast enrichment (best-effort)."""
+        if not mac:
+            return None
+        try:
+            from .nx_bridge import get_bridge
+            return await get_bridge().get_device_by_mac(mac)
+        except Exception:
+            return None
+
+    async def _maybe_switch_to_real(self, events: list[dict]) -> bool:
+        """Flip mock→real when a real device is discovered mid-session.
+
+        The startup detector and the MQTT/ESP32 path handle the normal cases; this
+        covers a generic scanned device appearing after startup while still in mock
+        mode. Switching makes the HUD drop the demo devices (the mode_changed
+        rebuild filters mock devices) and lets the preset/fingerprint enrichment
+        run against topology.json (real-mode preset index).
+        """
+        if not is_mock_mode():
+            return False
+        if not any(e.get("type") == "New Device" for e in events):
+            return False
+        from .topology_service import set_mock_mode
+        set_mock_mode(False)
+        logger.info("Real device discovered while in MOCK mode — switching to REAL")
+        return True
+
+    async def _enrich_device_fingerprints(self, events: list[dict]) -> list[dict]:
+        """Port-fingerprint new + backfill devices BEFORE broadcast (pillar 3).
+
+        For each New Device event (and a few still-unknown existing devices),
+        probe common IoT ports and write the inferred devType + devOpenPorts
+        back to the DB so the first device_discovered frame carries the right
+        type. Best-effort: never raises, returns the events list unchanged.
+        Skipped entirely in mock mode (protects the demo layout/devices).
+        """
+        try:
+            if is_mock_mode():
+                return events
+            from .port_fingerprint import fingerprint_device
+            from .nx_bridge import get_bridge
+            bridge = get_bridge()
+
+            # Gather candidate (mac, ip) pairs: new devices first, then backfill
+            # devices still typed "unknown".
+            candidates: dict[str, str] = {}  # mac -> ip (insertion-ordered, deduped)
+            for evt in events:
+                if evt.get("type") == "New Device":
+                    mac, ip = evt.get("mac", ""), evt.get("ip", "")
+                    if mac and ip and mac not in self._fingerprinted:
+                        candidates.setdefault(mac, ip)
             try:
-                from server.services.tool_broadcast_service import get_broadcast_service
-                bs = get_broadcast_service()
-                for evt in events:
-                    await bs.broadcast_event("scan_event", evt)
+                all_devs = await bridge.get_all_devices()
             except Exception:
-                pass
+                all_devs = []
+            for d in all_devs or []:
+                if not isinstance(d, dict):
+                    continue
+                if d.get("devDiscoveryMethod") in ("mock", "mqtt"):
+                    continue
+                mac, ip = d.get("devMac", ""), d.get("devLastIP", "")
+                if not mac or not ip or mac in candidates or mac in self._fingerprinted:
+                    continue
+                # Backfill devices that are still "unknown" OR have a known-device
+                # preset (the preset is authoritative for known devices, so it
+                # overrides e.g. a weak IP-heuristic "Gateway" with the real profile).
+                if (str(d.get("devType", "")).strip().lower() in _NULL_TYPE
+                        or match_device_profile(mac, ip) is not None):
+                    candidates.setdefault(mac, ip)
+
+            # Classify each candidate: a known-device preset (authoritative,
+            # instant, no probe) vs a port-fingerprint probe.
+            presets: list[tuple[str, dict]] = []
+            probe_targets: dict[str, str] = {}
+            for mac, ip in candidates.items():
+                profile = match_device_profile(mac, ip)
+                if profile:
+                    presets.append((mac, profile))
+                elif len(probe_targets) < _FP_CAP:
+                    probe_targets[mac] = ip
+
+            # 1. Apply known-device presets from topology.json (demo identity).
+            for mac, profile in presets:
+                try:
+                    await bridge.upsert_device(mac, {
+                        "devName": profile.get("name", ""),
+                        "devType": profile.get("type", "unknown"),
+                        "devVendor": profile.get("vendor", ""),
+                        "devModel": profile.get("model", ""),
+                        "devPos": json.dumps(profile.get("pos", [])),
+                        "devOpenPorts": json.dumps(profile.get("expected_ports", [])),
+                        "devIcon": profile.get("type", ""),
+                        "devProtocols": json.dumps(profile.get("protocols", [])),
+                        "devOsGuess": profile.get("os_guess", ""),
+                        "devSwitchPort": profile.get("switch_port") or "",
+                        "devGroup": profile.get("role", ""),
+                        "devNotes": profile.get("notes", ""),
+                    }, source="PROFILE")
+                    self._fingerprinted.add(mac)
+                except Exception as e:
+                    logger.debug(f"preset upsert failed for {mac}: {e}")
+
+            # 2. Port-fingerprint the remaining (unknown, non-preset) devices.
+            sem = asyncio.Semaphore(6)  # bound concurrent port probes (nmap/socket)
+
+            async def _one(m, ip):
+                async with sem:
+                    try:
+                        r = await asyncio.wait_for(fingerprint_device(ip, mac=m), timeout=8)
+                    except Exception as e:
+                        logger.debug(f"fingerprint failed for {m}@{ip}: {e}")
+                        return m, None
+                # Mark done only when the probe completed (incl. an "unknown"
+                # verdict); a transient failure (None) stays retryable next cycle.
+                if r is not None:
+                    self._fingerprinted.add(m)
+                return m, r
+
+            done = await asyncio.gather(*[_one(m, ip) for m, ip in probe_targets.items()])
+            for mac, r in done:
+                if not r:
+                    continue
+                data = {"devOpenPorts": json.dumps(r.get("open_ports", []))}
+                # Only set devType when the probe reached a decision; never overwrite
+                # a good existing type with "unknown".
+                if r.get("type") and r["type"] != "unknown":
+                    data["devType"] = r["type"]
+                try:
+                    await bridge.upsert_device(mac, data, source="PORTFP")
+                except Exception as e:
+                    logger.debug(f"upsert fingerprint failed for {mac}: {e}")
+        except Exception as e:
+            logger.debug(f"_enrich_device_fingerprints failed: {e}")
+        return events
+
+    async def _broadcast_device_events(self, events: list[dict]) -> None:
+        """Map scan pipeline events to HUD device WS messages and push them.
+
+        No-op when no broadcast callback is wired (tests, or before main.py
+        wiring). Silently skips events that don't change the device list.
+        """
+        if not events or not self._broadcast:
+            return
+        for evt in events:
+            if evt.get("type") not in _EVENT_TO_WS:
+                continue
+            mac = evt.get("mac", "")
+            device = await self._resolve_device(mac)
+            msg = build_device_ws_message(evt, device)
+            if msg:
+                try:
+                    await self._broadcast(msg)
+                except Exception as e:
+                    logger.debug(f"broadcast device event failed: {e}")
 
 
 # 单例

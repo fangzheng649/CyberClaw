@@ -6,7 +6,7 @@
   "devices": [
     {
       "id": "switch-core",
-      "name": "TP-LINK-SG2210LPF",
+      "name": "TL-SG2210LPF",
       "type": "switch",
       "ip": "192.168.1.1",
       "mac": "60:A3:E3:61:81:0F",
@@ -24,10 +24,10 @@
     },
     {
       "id": "camera-1",
-      "name": "Camera-Entrance",
+      "name": "DS-2CD1023G2-L-01",
       "type": "camera",
       "ip": "192.168.1.11",
-      "mac": "8C:22:D2:41:0B:CA",
+      "mac": "8C:22:D2:41:09:08",
       "vendor": "Hikvision",
       "model": "DS-2CD1023G2-L",
       "pos": [-6, 0, 8],
@@ -42,10 +42,10 @@
     },
     {
       "id": "camera-2",
-      "name": "Camera-Lobby",
+      "name": "DS-2CD1023G2-L-02",
       "type": "camera",
       "ip": "192.168.1.12",
-      "mac": "8C:22:D2:41:09:08",
+      "mac": "8C:22:D2:41:0B:CA",
       "vendor": "Hikvision",
       "model": "DS-2CD1023G2-L",
       "pos": [6, 0, 8],
@@ -60,7 +60,7 @@
     },
     {
       "id": "nvr",
-      "name": "NVR-Recorder",
+      "name": "DS-7108N-F1",
       "type": "nvr",
       "ip": "192.168.1.60",
       "mac": "04:EE:CD:03:2C:46",

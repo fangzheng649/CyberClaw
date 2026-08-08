@@ -28,7 +28,7 @@ CONFIG_PATH = PROJECT_ROOT / "config" / "scheduler.json"
 LEGACY_CHECKS = {
     "network_scan": {
         "tool_server": "nmap-scan", "tool_name": "host_discovery",
-        "tool_args": {}, "interval_seconds": 300,
+        "tool_args": {}, "interval_seconds": 90,
         "notify_on": ["new_device", "device_down"],
     },
     "cve_check": {

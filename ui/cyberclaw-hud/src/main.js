@@ -432,6 +432,16 @@ function addDeviceToScene(dev) {
 }
 
 function removeDeviceFromScene(deviceId) {
+  // 设备离线时，与之相连的连线也要一并删除（否则节点没了连线还悬挂在场景里）
+  state.links
+    .filter(l => l.fromId === deviceId || l.toId === deviceId)
+    .forEach(l => {
+      l.mat?.dispose();
+      l.line.geometry?.dispose();
+      state.scene.remove(l.line);
+    });
+  state.links = state.links.filter(l => l.fromId !== deviceId && l.toId !== deviceId);
+
   const idx = state.devices.findIndex(d => d.id === deviceId);
   if (idx < 0) return;
   const entry = state.devices[idx];
@@ -1509,6 +1519,51 @@ async function triggerDeviceScan(deviceId) {
   } catch (e) { console.error('Scan failed:', e); }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 手动网络扫描（快捷键触发）
+// 扫描为手动模式：系统启动时扫一次，之后按下方快捷键主动发起；
+// 结果经 device_discovered / scan_result 等 WS 消息自动刷新 HUD。
+// ══════════════════════════════════════════════════════════════════
+const SCAN_HOTKEY = 's';          // 改这一处即可换键（裸键，无修饰键）
+let _hudScanInFlight = false;     // 防止连按重复触发
+
+async function triggerHudScan() {
+  if (_hudScanInFlight) return;
+  _hudScanInFlight = true;
+  showNotificationToast({ title: '网络扫描已触发', message: '正在发现网络设备…', severity: 'info' });
+  try {
+    const resp = await fetch('/api/scan/trigger', { method: 'POST' });
+    const data = await resp.json().catch(() => ({}));
+    if (data && data.status === 'ok') {
+      showNotificationToast({ title: '扫描完成', message: `发现 ${data.found ?? 0} 台设备`, severity: 'discovery' });
+    } else if (data && data.status === 'error') {
+      showNotificationToast({ title: '扫描失败', message: data.message || '未知错误', severity: 'warning' });
+    }
+  } catch (e) {
+    console.error('HUD scan trigger failed:', e);
+    showNotificationToast({ title: '扫描失败', message: String(e), severity: 'warning' });
+  } finally {
+    // 扫描后端可能仍在广播 device_discovered；短暂锁定期避免连按刷屏
+    setTimeout(() => { _hudScanInFlight = false; }, 1500);
+  }
+}
+
+function _isTypingTarget(el) {
+  if (!el) return false;
+  const tag = (el.tagName || '').toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable === true;
+}
+
+function onScanHotkey(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;   // 不拦截 Ctrl/Cmd+S 等
+  if (e.repeat) return;                              // 长按不重复触发
+  if (_isTypingTarget(e.target)) return;             // 在输入框/聊天打字时不触发
+  if ((e.key || '').toLowerCase() === SCAN_HOTKEY) {
+    e.preventDefault();
+    triggerHudScan();
+  }
+}
+
 async function triggerCveCheck(deviceId, vendor, model) {
   try {
     await fetch('/api/tools/cve-check', {
@@ -1807,6 +1862,8 @@ async function boot() {
   animate();
   onResize();
   window.addEventListener('resize', onResize);
+  // 隐藏快捷键：按 S 触发一次手动网络扫描（扫描为手动模式，不再每 30s 自动扫）
+  window.addEventListener('keydown', onScanHotkey);
 }
 
 boot();
