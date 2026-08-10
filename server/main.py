@@ -176,6 +176,14 @@ async def lifespan(app: FastAPI):
         await scan_svc.start(subnet=scan_subnet, interval=scan_interval)
         logger.info(f"Scan service started (manual mode): subnet={scan_subnet}; "
                     f"subsequent scans triggered by HUD hotkey POST /api/scan/trigger")
+        # 预热 TP-LINK 交换机 web session（后台，不阻塞后端启动）—— 隔离/恢复时复用，
+        # 单次操作从 ~15s 降到 ~5s。交换机不可达/凭证错都不影响后端起来。
+        try:
+            from .services.tplink_web_isolator import get_tplink_isolator
+            asyncio.create_task(asyncio.to_thread(get_tplink_isolator().ensure_session))
+            logger.info("TP-LINK web session 预热中（后台），隔离/恢复将复用此 session")
+        except Exception as _e:
+            logger.debug(f"TP-LINK session 预热跳过: {_e}")
     else:
         logger.warning("SCAN_SUBNET not set and no subnet in topology.json — auto-scan disabled")
 
@@ -257,6 +265,12 @@ async def lifespan(app: FastAPI):
     # 停止自动扫描
     try:
         await get_scan_service().stop()
+    except Exception:
+        pass
+    # 释放常驻的 TP-LINK web session（selenium Edge）
+    try:
+        from .services.tplink_web_isolator import get_tplink_isolator
+        get_tplink_isolator().shutdown()
     except Exception:
         pass
     # 关闭数据库

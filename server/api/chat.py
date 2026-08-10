@@ -65,8 +65,8 @@ SYSTEM_PROMPT_TEMPLATE = """你是 CyberAgent，CyberClaw 平台的 IoT 安全�
 5. 不要假装有数据。如果工具结果为空或失败，就说"未能获取到数据"并解释原因。
 6. 【严重性准确性】如实反映数据的严重性级别。如果CVE的CVSS分数为0或数据标记为"LOW"，就说"低风险"，禁止使用"高危"、"严重"、"立即隔离"等夸张措辞。建议措施应与实际严重性匹配：低危→观察监控，中危→计划修复，高危→优先修复，严重→立即处理。
 7. 【数据优先于描述】即使CVE的文字描述听起来很严重（如"缓冲区溢出"、"远程代码执行"），也必须以CVSS分数和严重性标记为准。CVSS 0 = 低危，不要因为描述可怕就夸大风险。
-8. 【设备恢复】当用户要求"恢复"、"解除隔离"、"解封"设备时，告知用户可以在HUD界面点击设备的RESTORE按钮来恢复，或者提供设备IP让用户确认后执行恢复操作。get_response_status工具会自动同步数据库中的实际设备状态，如果设备已恢复，会显示0个活跃隔离动作。
-9. 【隔离确认卡片】当用户明确要求隔离设备，且工具结果中包含设备信息时，你必须：
+8. 【设备恢复】当用户要求"恢复/解除隔离/取消隔离"设备时，系统会**直接执行恢复**（restore_device 工具，通过交换机端口 undo shutdown 恢复设备网络）。基于 restore_device 结果如实回复：成功（status=applied/restored）→ 告知设备已恢复网络可达；失败 → 如实告知原因。**不要再让用户去 HUD 点 RESTORE 按钮**——agent 已直接执行。
+9. 【隔离确认卡片】当用户消息表达隔离意图（含"隔离/封禁"且带目标设备或 IP，无论措辞是"隔离"、"确认隔离"、"帮我隔离"、"隔离一下"），且工具结果中含设备信息（device_lookup）时——这是**执行隔离的请求，不是查询**，绝不能回复"未登记/无隔离记录/请确认设备"。你必须：
    a) 列出所有匹配的设备（IP、名称、类型）
    b) 在回复末尾直接输出确认卡片 HTML（不要用代码块包裹，不要加```html标记，直接写HTML标签）。
    每台设备一张卡片，HTML格式如下（将IP和设备名替换为实际值）：
@@ -86,22 +86,50 @@ SYSTEM_PROMPT_TEMPLATE = """你是 CyberAgent，CyberClaw 平台的 IoT 安全�
 使用简洁中文回复，可使用 markdown 格式。回答要有专业性和可操作性。"""
 
 
+def _real_online_devices(devices: list) -> list:
+    """Filter to real (non-mock), online devices — mirrors async_get_topology.
+
+    In real mode the HUD only shows online real devices, so the system prompt's
+    environmental picture (device count, status summary) must match: exclude
+    offline mock lab devices, otherwise the agent claims e.g. "secure×22" while
+    only a handful of real devices are actually online.
+    """
+    out = []
+    for d in devices:
+        if not isinstance(d, dict):
+            continue
+        if d.get("devDiscoveryMethod") == "mock":
+            continue
+        if not bool(d.get("devPresentLastScan", 0)):
+            continue
+        out.append(d)
+    return out
+
+
 async def _build_system_prompt() -> str:
     try:
+        from ..services.topology_service import async_get_topology
         from ..services.nx_bridge import get_bridge
-        from ..services.topology_service import is_mock_mode
         bridge = get_bridge()
-        devices = await bridge.get_all_devices()
-        counts = await bridge.get_device_counts_by_status()
         event_count = await bridge.count_security_events()
+
+        # 设备真相源 = async_get_topology（与 HUD / dashboard 同源，mode-aware：
+        # real 模式→真实在线设备，mock 模式→mock 演示设备）。
+        # 不再自己 get_all_devices + 过滤，避免与 HUD 的 device_count/状态口径不一致。
+        topo = await async_get_topology()
+        devices = topo.devices
 
         device_count = len(devices)
         types = {}
         for d in devices:
-            t = d.get("devType", "unknown")
+            t = d.type or "unknown"
             types[t] = types.get(t, 0) + 1
         device_summary = "、".join(f"{t}×{c}" for t, c in sorted(types.items(), key=lambda x: -x[1])[:5])
-        status_summary = "、".join(f"{s}×{c}" for s, c in counts.items() if c > 0)
+        status_counts = {}
+        for d in devices:
+            s = d.status or "secure"
+            status_counts[s] = status_counts.get(s, 0) + 1
+        status_summary = "、".join(f"{s}×{c}" for s, c in status_counts.items() if c > 0)
 
         prompt = SYSTEM_PROMPT_TEMPLATE.format(
             device_count=device_count,
@@ -614,14 +642,61 @@ async def chat(req: ChatRequest) -> ChatResponse:
                         and not seen.add((r.get("server"), r.get("tool")))]
         steps = _build_steps_from_results(tool_results)
         is_report_request = any(r.get("tool") == "generate_report" for r in tool_results)
+        # 恢复/取消隔离（安全操作，直接执行 restore；优先于隔离判断——
+        # "取消隔离"含"隔离"，必须先判恢复，否则被隔离意图误捕获）
+        if re.search(r"恢复|解除|解封|取消.*隔离|重新.*连接|restore", req.message, re.IGNORECASE):
+            _ips = re.findall(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", req.message)
+            if _ips:
+                from ..services.mcp_tool_service import call_tool
+                _restored = []
+                for _ip in _ips:
+                    try:
+                        _rr = await call_tool("auto-response", "restore_device", device_ip=_ip)
+                        _restored.append({"ip": _ip, **(_rr if isinstance(_rr, dict) else {})})
+                    except Exception as _e:
+                        _restored.append({"ip": _ip, "error": str(_e)})
+                # 移除 get_response_status 查询结果（避免误导），只保留 restore_device 执行结果
+                tool_results = [r for r in tool_results
+                                if not (r.get("server") == "auto-response"
+                                        and r.get("tool") == "get_response_status")]
+                steps = [s for s in steps
+                         if not s.tool.startswith("auto-response/get_response_status")]
+                tool_results.append({
+                    "server": "auto-response", "tool": "restore_device",
+                    "result": {"restored": _restored, "count": len(_restored)},
+                })
+                steps.append(AnalysisStep(
+                    tool="auto-response/restore_device",
+                    summary="设备恢复 — 已对 " + ", ".join(_ips) + " 解除隔离（端口 undo shutdown）",
+                ))
+                # 恢复成功后广播 device_restored，让 HUD 同步（否则 DB 改了但 HUD 仍显示 isolated）
+                from datetime import datetime as _dt
+                from ..services.tool_broadcast_service import _broadcast as _bcast
+                from ..services.topology_service import async_get_device_id_by_ip
+                for _r in _restored:
+                    if _r.get("status") in ("applied", "restored", "executed"):
+                        _did = await async_get_device_id_by_ip(_r.get("ip", "")) or _r.get("ip", "")
+                        await _bcast({
+                            "type": "device_restored", "target": _did, "source": "cyberagent",
+                            "severity": "info",
+                            "message": f"Device {_r.get('ip')} restored to secure",
+                            "timestamp": _dt.now().isoformat(),
+                        })
         # 隔离意图：从消息提取 IP，查真实设备(topology/DB)注入结果，
         # 让 LLM 据设备信息生成隔离确认卡片（不依赖 iot_fingerprint 扫描）
-        if re.search(r"隔离|isolat|封禁|block", req.message, re.IGNORECASE):
-            _ips = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", req.message)
+        elif re.search(r"隔离|isolat|封禁|block", req.message, re.IGNORECASE):
+            _ips = re.findall(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", req.message)
             if _ips:
                 from ..services.mcp_tool_service import lookup_devices_by_ip
                 _devs = await lookup_devices_by_ip(_ips)
                 if _devs:
+                    # 移除 get_response_status 的查询结果：它返回"0 个活跃隔离"会误导
+                    # LLM 把"隔离 <IP>"当成状态查询，而非执行隔离 → 应生成确认卡片。
+                    tool_results = [r for r in tool_results
+                                    if not (r.get("server") == "auto-response"
+                                            and r.get("tool") == "get_response_status")]
+                    steps = [s for s in steps
+                             if not s.tool.startswith("auto-response/get_response_status")]
                     tool_results.append({
                         "server": "device-config", "tool": "device_lookup",
                         "result": {"devices": _devs, "matched_count": len(_devs),

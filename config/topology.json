@@ -117,8 +117,6 @@
     {"from": "switch-core", "to": "camera-1"},
     {"from": "switch-core", "to": "camera-2"},
     {"from": "switch-core", "to": "nvr"},
-    {"from": "switch-core", "to": "cyberclaw-console"},
-    {"from": "nvr", "to": "camera-1"},
-    {"from": "nvr", "to": "camera-2"}
+    {"from": "switch-core", "to": "cyberclaw-console"}
   ]
 }

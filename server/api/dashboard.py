@@ -68,12 +68,27 @@ async def get_db_device_events(
 
 @router.get("/db/devices")
 async def get_db_devices():
+    # 设备列表以 async_get_topology 为唯一基准（mode-aware + 在线过滤 + 统一 id），
+    # 再附加 DB 的详细字段（端口/协议/交换机端口等）—— 这样 chat 表/dashboard 瓦片
+    # 与 HUD 完全同源，不会出现"A 处 4 台、B 处 22 台"的口径分歧。
+    from ..services.topology_service import async_get_topology
     bridge = get_bridge()
-    devices = await bridge.get_all_devices()
-    return {
-        "devices": devices,
-        "total": len(devices),
-    }
+    topo = await async_get_topology()
+    db_all = await bridge.get_all_devices()
+    db_by_mac = {(d.get("devMac") or "").lower(): d
+                 for d in db_all if isinstance(d, dict) and d.get("devMac")}
+    enriched = []
+    for dev in topo.devices:
+        row = dict(db_by_mac.get((dev.mac or "").lower(), {}))
+        # 权威字段来自 async_get_topology（统一 id/status/online/source）
+        row.update({
+            "id": dev.id, "name": dev.name, "type": dev.type, "ip": dev.ip,
+            "mac": dev.mac, "devStatus": dev.status, "status": dev.status,
+            "online": dev.online,
+            "source": "mock" if dev.discovery_method == "mock" else "real",
+        })
+        enriched.append(row)
+    return {"devices": enriched, "total": len(enriched)}
 
 
 # ── Unified Alert List (in-memory + DB) ──────────────────────────

@@ -67,7 +67,7 @@ def is_react_intent(message: str) -> bool:
 
 # ── Target device extraction ─────────────────────────────────────
 
-_IP_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
+_IP_RE = re.compile(r"(?<![\d.])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?![\d.])")
 
 
 def _normalize(s: str) -> str:

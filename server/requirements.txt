@@ -10,3 +10,6 @@ pysnmp>=5.1.0
 paho-mqtt>=2.0.0
 netmiko>=4.2.0
 croniter>=2.0.0
+
+# Browser automation for TP-LINK switch web isolation (real port shutdown)
+selenium>=4.15

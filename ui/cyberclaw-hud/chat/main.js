@@ -1434,29 +1434,8 @@ async function handleConfirm(action, btn) {
     }
 
     confirmCard.innerHTML = `
-      <div class="confirm-title" style="color:#00bbff">正在隔离 ${escapeHtml(deviceIp)}</div>
-      <div class="confirm-details iso-progress"><div class="iso-step iso-active">▸ 正在执行网络封禁...</div></div>`;
-
-    // Staged progress messages shown while isolation executes
-    const stages = [
-      '正在连接接入交换机...',
-      '正在下发端口关闭指令...',
-      '正在验证隔离效果 (ping/端口探测)...',
-    ];
-    let stageIdx = 0;
-    const stageTimer = setInterval(() => {
-      const progressEl = confirmCard.querySelector('.iso-progress');
-      if (!progressEl) return;
-      const prev = progressEl.querySelector('.iso-active');
-      if (prev) { prev.classList.remove('iso-active'); prev.classList.add('iso-done'); prev.textContent = prev.textContent.replace('▸', '✓'); }
-      if (stageIdx < stages.length) {
-        const step = document.createElement('div');
-        step.className = 'iso-step iso-active';
-        step.textContent = '▸ ' + stages[stageIdx];
-        progressEl.appendChild(step);
-        stageIdx++;
-      }
-    }, 850);
+      <div class="confirm-title" style="color:#00bbff">正在隔离 ${escapeHtml(deviceIp)}…</div>
+      <div class="confirm-details"><div>正在通过交换机 web 端口 shutdown 隔离设备…</div></div>`;
 
     try {
       const resp = await fetch('/api/tools/isolate', {
@@ -1465,30 +1444,34 @@ async function handleConfirm(action, btn) {
         body: JSON.stringify({ device_id: deviceId, device_ip: deviceIp }),
       });
       const data = await resp.json();
-      clearInterval(stageTimer);
+      const iso = data.isolation || {};
+      const unreachable = iso.ping_reachable === false;
 
-      if (data.task_id || data.status === 'started') {
+      if (data.status === 'isolated') {
+        const verify = unreachable
+          ? '<div class="iso-verify">✓ 验证通过：设备已不可达（ping 无响应）</div>'
+          : '<div class="iso-verify" style="color:var(--muted)">⚠ 未能验证设备不可达</div>';
         confirmCard.innerHTML = `
-          <div class="confirm-title" style="color:var(--accent)">✓ 隔离完成</div>
+          <div class="confirm-title" style="color:var(--accent)">✓ 隔离生效</div>
           <div class="confirm-details">
-            <div>设备 <strong>${escapeHtml(deviceIp)}</strong> 网络封禁规则已生效</div>
-            <div class="iso-verify">✓ 隔离验证通过：ping 不可达，端口无响应</div>
-            <div style="margin-top:4px;color:rgba(255,255,255,0.5);font-size:10px;">Task ID: ${escapeHtml(data.task_id || 'N/A')}</div>
+            <div>设备 <strong>${escapeHtml(deviceIp)}</strong> 已通过交换机端口 ${escapeHtml(String(iso.port || ''))} shutdown 隔离</div>
+            ${verify}
+            <div style="margin-top:4px;color:rgba(255,255,255,0.5);font-size:10px;">方式: ${escapeHtml(iso.method || data.status)}</div>
           </div>`;
-        addOpHistory('success', '设备隔离完成', `${deviceIp} — task ${data.task_id || 'N/A'}`);
-
-        // Notify HUD via BroadcastChannel for immediate cross-page update
+        addOpHistory('success', '设备隔离生效', `${deviceIp} — ${iso.method || ''} port ${iso.port || ''}`);
         _broadcastIsolation(deviceIp, deviceId);
 
       } else {
-        clearInterval(stageTimer);
+        // 隔离未生效 —— 如实显示真实原因，不假装成功
         confirmCard.innerHTML = `
-          <div class="confirm-title" style="color:#ffaa00">隔离响应</div>
-          <div class="confirm-details"><div><code>${escapeHtml(JSON.stringify(data))}</code></div></div>`;
-        addOpHistory('warning', 'Isolation response received', JSON.stringify(data));
+          <div class="confirm-title" style="color:#ff4466">✗ 隔离未生效</div>
+          <div class="confirm-details">
+            <div>${escapeHtml(data.error || data.status || '未知原因')}</div>
+            ${iso.ping_reachable === false ? '' : '<div style="color:var(--muted);font-size:10px;">设备仍可达</div>'}
+          </div>`;
+        addOpHistory('error', '隔离未生效', `${deviceIp} — ${data.error || data.status}`);
       }
     } catch (e) {
-      clearInterval(stageTimer);
       confirmCard.innerHTML = `
         <div class="confirm-title" style="color:#ff4466">隔离失败</div>
         <div class="confirm-details"><div>${escapeHtml(e.message)}</div></div>`;
@@ -2026,7 +2009,7 @@ let renderDeviceTable = function() {
   body.innerHTML = `
     <div class="device-stat-cards">
       <div class="stat-card"><div class="stat-num">${state.devices.length}</div><div class="stat-label">总设备</div></div>
-      <div class="stat-card stat-online"><div class="stat-num">${state.devices.filter(d => (d.devStatus || 'secure') !== 'isolated').length}</div><div class="stat-label">在线</div></div>
+      <div class="stat-card stat-online"><div class="stat-num">${state.devices.filter(d => d.online !== false).length}</div><div class="stat-label">在线</div></div>
       <div class="stat-card stat-cam"><div class="stat-num">${state.devices.filter(d => d.devType === 'camera').length}</div><div class="stat-label">摄像头</div></div>
       <div class="stat-card stat-sensor"><div class="stat-num">${state.devices.filter(d => d.devType === 'sensor' || d.devType === 'plc').length}</div><div class="stat-label">工控</div></div>
       <div class="stat-card stat-infra"><div class="stat-num">${state.devices.filter(d => ['switch','gateway','firewall'].includes(d.devType)).length}</div><div class="stat-label">基础设施</div></div>
@@ -3325,7 +3308,7 @@ renderDeviceTable = function() {
   body.innerHTML = `
     <div class="device-stat-cards">
       <div class="stat-card"><div class="stat-num">${state.devices.length}</div><div class="stat-label">总设备</div></div>
-      <div class="stat-card stat-online"><div class="stat-num">${state.devices.filter(d => (d.devStatus || 'secure') !== 'isolated').length}</div><div class="stat-label">在线</div></div>
+      <div class="stat-card stat-online"><div class="stat-num">${state.devices.filter(d => d.online !== false).length}</div><div class="stat-label">在线</div></div>
       <div class="stat-card stat-cam"><div class="stat-num">${state.devices.filter(d => d.devType === 'camera').length}</div><div class="stat-label">摄像头</div></div>
       <div class="stat-card stat-sensor"><div class="stat-num">${state.devices.filter(d => ['sensor','plc'].includes(d.devType)).length}</div><div class="stat-label">工控</div></div>
       <div class="stat-card stat-infra"><div class="stat-num">${state.devices.filter(d => ['switch','gateway','firewall'].includes(d.devType)).length}</div><div class="stat-label">基础设施</div></div>
@@ -3437,7 +3420,7 @@ function renderToolResultCard(tr) {
   // Scan results — host table
   if (r.hosts && Array.isArray(r.hosts) && r.hosts.length > 0) {
     const rows = r.hosts.slice(0, 12).map(h => {
-      const ports = (h.ports || []).slice(0, 6).map(p =>
+      const ports = ((h.open_ports || h.ports) || []).slice(0, 6).map(p =>
         `<span class="port-badge">${typeof p === 'object' ? p.port || p.num : p}</span>`
       ).join(' ');
       return `<tr>

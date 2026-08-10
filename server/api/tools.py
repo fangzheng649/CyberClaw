@@ -73,6 +73,18 @@ async def trigger_baseline(body: dict):
     return {"task_id": tid, "status": "started"}
 
 
+def _ping_reachable(ip: str) -> bool:
+    """True if ip responds to ICMP ping within ~2s (用于隔离后真实验证)。"""
+    import subprocess, platform
+    is_win = platform.system() == "Windows"
+    cmd = (["ping", "-n", "1", "-w", "2000", ip] if is_win
+           else ["ping", "-c", "1", "-W", "2", ip])
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=5).returncode == 0
+    except Exception:
+        return False
+
+
 @router.post("/isolate")
 async def trigger_isolate(body: dict):
     import logging
@@ -109,9 +121,13 @@ async def trigger_isolate(body: dict):
     except Exception as e:
         logger.warning(f"MCP isolate failed: {e}")
 
+    # 真隔离生效的状态：web_switch=applied, iptables=isolated/already_isolated, ssh=executed。
+    # 注意：recorded（record_only）不算成功 —— 那只是"记录了意图"，没真隔离。
+    _ISO_OK = ("applied", "isolated", "already_isolated", "executed")
+
     # Fallback to direct IsolationService if MCP didn't isolate
     status = isolation_result.get("status", "") if isinstance(isolation_result, dict) else ""
-    if status not in ("isolated", "already_isolated", "recorded"):
+    if status not in _ISO_OK:
         try:
             iso_svc = get_isolation_service()
             iso_result = await iso_svc.isolate(target_ip)
@@ -121,7 +137,7 @@ async def trigger_isolate(body: dict):
             isolation_result.setdefault("status", "error")
             isolation_result.setdefault("detail", str(e))
 
-    # ── Docker container stop (most reliable method in lab env) ───
+    # ── Docker container stop (lab env only) ───
     docker_stopped = False
     if container:
         import subprocess
@@ -134,56 +150,53 @@ async def trigger_isolate(body: dict):
                 if r.returncode == 0:
                     docker_stopped = True
                     isolation_result["docker"] = "stopped"
-                    isolation_result.setdefault("status", "isolated")
                     logger.info(f"Docker container {container} stopped")
                     break
             except Exception as e:
-                logger.debug(f"Docker stop via {'wsl' if wsl_flag else 'direct'} failed: {e}")
-    if not docker_stopped and container:
-        isolation_result.setdefault("status", isolation_result.get("status", "recorded"))
-        isolation_result.setdefault("detail", "Docker stop failed, status recorded only")
+                logger.debug(f"Docker stop failed: {e}")
 
-    # Update device status and record security event via nx_bridge
-    if dev and dev.mac:
-        try:
-            from ..services.nx_bridge import get_bridge
-            bridge = get_bridge()
-            await bridge.update_device_status(dev.mac, "isolated")
-            await bridge.record_security_event(
-                source_type="isolation",
-                severity="high",
-                message=f"Device {device_id} isolated",
-                target=device_id,
-                target_mac=dev.mac,
-                fsm_state="isolated",
-            )
-        except Exception as e:
-            logger.warning(f"DB update failed: {e}")
+    # ── 诚实判定：隔离是否真生效（ping 验证）───
+    final_status = isolation_result.get("status", "")
+    applied = final_status in _ISO_OK or docker_stopped
+    # 真实验证：ping 设备。端口 shutdown 后应不可达；若仍可达 = 隔离未生效。
+    ping_reachable = _ping_reachable(target_ip)
+    isolation_result["ping_reachable"] = ping_reachable
+    if applied and ping_reachable and not docker_stopped:
+        logger.warning(f"Isolation applied but {target_ip} still reachable — NOT effective")
+        applied = False
+    isolation_result["effective"] = applied
 
-    # ── Broadcast device_isolated directly (do NOT re-call MCP) ──
-    # Previously used run_tool_and_broadcast which called MCP again —
-    # that second call would fail since device is already isolated,
-    # and the error path never sends device_isolated, so HUD got no feedback.
     from datetime import datetime
     from ..services.tool_broadcast_service import _broadcast
-    await _broadcast({
-        "type": "device_isolated",
-        "target": device_id,
-        "source": "cyberagent",
-        "severity": "high",
-        "message": f"Device {device_id} ({target_ip}) isolated",
-        "timestamp": datetime.now().isoformat(),
-    })
 
-    tid = _task_id()
-    return {
-        "task_id": tid,
-        "status": "isolated",
-        "device": device_id,
-        "ip": target_ip,
-        "container": container,
-        "isolation": isolation_result,
-    }
+    if applied:
+        # 真隔离生效 → 改 DB + 广播 + 返回成功
+        if dev and dev.mac:
+            try:
+                from ..services.nx_bridge import get_bridge
+                bridge = get_bridge()
+                await bridge.update_device_status(dev.mac, "isolated")
+                await bridge.record_security_event(
+                    source_type="isolation", severity="high",
+                    message=f"Device {device_id} isolated (port shutdown, verified unreachable)",
+                    target=device_id, target_mac=dev.mac, fsm_state="isolated",
+                )
+            except Exception as e:
+                logger.warning(f"DB update failed: {e}")
+        await _broadcast({
+            "type": "device_isolated", "target": device_id, "source": "cyberagent",
+            "severity": "high",
+            "message": f"Device {device_id} ({target_ip}) isolated — ping verified unreachable",
+            "timestamp": datetime.now().isoformat(),
+        })
+        return {"task_id": _task_id(), "status": "isolated", "device": device_id,
+                "ip": target_ip, "container": container, "isolation": isolation_result}
+
+    # 隔离未生效 —— 如实返回失败：不改 DB、不广播 device_isolated、不假装成功
+    logger.warning(f"Isolation NOT effective for {target_ip}: {final_status}")
+    return {"task_id": _task_id(), "status": "failed", "device": device_id, "ip": target_ip,
+            "error": isolation_result.get("message") or isolation_result.get("detail") or final_status,
+            "isolation": isolation_result}
 
 
 # ── Collector endpoints ──────────────────────────────────────────
@@ -259,7 +272,7 @@ async def trigger_restore(body: dict):
 
     # Fallback to direct service
     status = restore_result.get("status", "") if isinstance(restore_result, dict) else ""
-    if status not in ("restored", "not_isolated", "recorded"):
+    if status not in ("restored", "not_isolated", "applied", "executed", "recorded"):
         try:
             iso_svc = get_isolation_service()
             iso_result = await iso_svc.restore(target_ip)
@@ -307,11 +320,11 @@ async def trigger_restore(body: dict):
             logger.warning(f"DB update failed: {e}")
             pass
 
-    # ── Broadcast threat_resolved directly ──
+    # ── Broadcast device_restored (前端 src/main.js 监听 device_restored → updateDeviceStatus secure) ──
     from datetime import datetime
     from ..services.tool_broadcast_service import _broadcast
     await _broadcast({
-        "type": "threat_resolved",
+        "type": "device_restored",
         "target": device_id,
         "source": "cyberagent",
         "severity": "info",

@@ -33,7 +33,11 @@ async def list_events(
 
 @router.get("/state/{device_id}")
 async def device_state(device_id: str):
-    dev = get_device(device_id)
+    # 用 async_get_topology：sync get_device 在 async 上下文会跳过 DB（event loop running）
+    # → 返回 config 拓扑，状态恒为 secure（错误）。async_get_topology 走 DB 真实状态。
+    from ..services.topology_service import async_get_topology
+    topo = await async_get_topology()
+    dev = next((d for d in topo.devices if d.id == device_id), None)
     if not dev:
         return JSONResponse({"error": "not_found", "detail": f"Device {device_id} not found"}, status_code=404)
     return {

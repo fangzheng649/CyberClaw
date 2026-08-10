@@ -92,13 +92,20 @@ def _get_isolation_service():
         return None
 
 
-def _update_device_status(device_ip: str, status: str) -> None:
-    """Update device status in the database."""
+async def _update_device_status(device_ip: str, status: str) -> None:
+    """通过 NXBridge 按 MAC 更新设备状态（与所有其他写入路径一致）。
+
+    之前直接 sqlite3 按 devLastIP 更新 —— IP 变化(DHCP)或 MAC 大小写不一致会漏，
+    且绕过 NXBridge 的连接管理。改为 ip→mac→update_device_status(mac)。
+    """
     try:
-        conn = sqlite3.connect(str(_DB_PATH))
-        conn.execute('UPDATE Devices SET "devStatus" = ? WHERE "devLastIP" = ?', (status, device_ip))
-        conn.commit()
-        conn.close()
+        from server.services.nx_bridge import get_bridge
+        bridge = get_bridge()
+        dev = await bridge.get_device_by_ip(device_ip)
+        if dev and dev.get("devMac"):
+            await bridge.update_device_status(dev["devMac"], status)
+        else:
+            logger.warning(f"_update_device_status: {device_ip} not found in DB")
     except Exception as e:
         logger.error(f"DB device status update failed: {e}")
 
@@ -171,8 +178,9 @@ async def isolate_device(device_ip: str, reason: str = "security_event") -> str:
         result = {"status": "error", "message": str(e)}
 
     # Persist isolation state to database
-    if result.get("status") in ("isolated", "already_isolated", "recorded"):
-        _update_device_status(device_ip, "isolated")
+    # applied=web_switch(端口 shutdown), executed=ssh_switch, isolated/already_isolated=iptables
+    if result.get("status") in ("isolated", "already_isolated", "applied", "executed", "recorded"):
+        await _update_device_status(device_ip, "isolated")
         _record_security_event(
             source_type="auto-response",
             severity="warning",
@@ -212,10 +220,9 @@ async def restore_device(device_ip: str) -> str:
             a["status"] = "restored"
             restored.append(a["id"])
 
-    if not restored:
-        return json.dumps({"status": "not_isolated", "device": device_ip}, ensure_ascii=False)
-
     info = _resolve_device(device_ip)
+    # 无论 _active_actions 是否有记录都执行恢复——后端重启后内存清空，但端口可能仍
+    # shutdown；IsolationService.restore 基于实际端口状态 undo shutdown（已 enable 则无害）。
     action = _add_action("restore", device_ip,
                          f"Restore {device_ip} ({info['name'] if info else 'unknown'})", status="completed")
 
@@ -231,8 +238,9 @@ async def restore_device(device_ip: str) -> str:
         result = {"status": "error", "message": str(e)}
 
     # Persist restored state to database
-    if result.get("status") in ("restored", "recorded"):
-        _update_device_status(device_ip, "secure")
+    # applied=web_switch(端口 undo shutdown), executed=ssh_switch, restored=iptables
+    if result.get("status") in ("restored", "applied", "executed", "recorded"):
+        await _update_device_status(device_ip, "secure")
         _record_security_event(
             source_type="auto-response",
             severity="info",

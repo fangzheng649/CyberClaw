@@ -49,7 +49,9 @@ _iptables_rules: dict[str, str] = {}
 
 
 def _get_method() -> str:
-    return os.getenv("ISOLATION_METHOD", "iptables").lower()
+    # web_switch = selenium 驱动交换机 web shutdown 端口（真物理隔离，默认）。
+    # 设备无 SSH/SNMP/Telnet，HTTP API 登录被反自动化拒绝，只能走浏览器驱动。
+    return os.getenv("ISOLATION_METHOD", "web_switch").lower()
 
 
 def _load_device_ports() -> dict:
@@ -118,6 +120,15 @@ class IsolationService:
             result.update(r)
             result["switch"] = info["switch"]
             result["port"] = info["port"]
+        elif method == "web_switch":
+            if not info:
+                result["status"] = "error"
+                result["message"] = f"Device {device_ip} not found in port mapping (no switch_port)"
+                return result
+            r = await self._isolate_web(info["port"])
+            result.update(r)
+            result["switch"] = info["switch"]
+            result["port"] = info["port"]
         else:
             result["status"] = "recorded"
             result["message"] = f"Isolation recorded for {device_ip} (no active method)"
@@ -146,6 +157,15 @@ class IsolationService:
                 result["message"] = f"Device {device_ip} not found"
                 return result
             r = await self._restore_ssh(info["switch"], info["port"])
+            result.update(r)
+            result["switch"] = info["switch"]
+            result["port"] = info["port"]
+        elif method == "web_switch":
+            if not info:
+                result["status"] = "error"
+                result["message"] = f"Device {device_ip} not found (no switch_port)"
+                return result
+            r = await self._restore_web(info["port"])
             result.update(r)
             result["switch"] = info["switch"]
             result["port"] = info["port"]
@@ -259,6 +279,25 @@ class IsolationService:
         cmds = [c.replace("{port}", port) for c in cmds]
 
         return await self._ssh_exec(switch_ip, cmds, "undo shutdown")
+
+    # ── web switch implementation (selenium driver — default method) ──
+
+    async def _isolate_web(self, port_label: str) -> dict:
+        """通过 selenium 驱动交换机 web shutdown 端口（真物理隔离，设备断网）。"""
+        from .tplink_web_isolator import _parse_port_number, get_tplink_isolator
+        port = _parse_port_number(port_label)
+        if port is None:
+            return {"status": "error", "message": f"无法从端口标签解析端口号: {port_label!r}"}
+        # set_port 是同步阻塞（selenium ~15s），用 to_thread 不卡 event loop
+        return await asyncio.to_thread(get_tplink_isolator().set_port, port, False)
+
+    async def _restore_web(self, port_label: str) -> dict:
+        """通过 selenium 驱动交换机 web undo shutdown 端口（恢复）。"""
+        from .tplink_web_isolator import _parse_port_number, get_tplink_isolator
+        port = _parse_port_number(port_label)
+        if port is None:
+            return {"status": "error", "message": f"无法从端口标签解析端口号: {port_label!r}"}
+        return await asyncio.to_thread(get_tplink_isolator().set_port, port, True)
 
     async def _ssh_exec(self, switch_ip: str, commands: list[str],
                         operation: str) -> dict:

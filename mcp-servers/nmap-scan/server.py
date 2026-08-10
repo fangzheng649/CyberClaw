@@ -73,6 +73,7 @@ class HostResult(BaseModel):
     mac: Optional[str] = None
     state: str = "up"
     vendor: Optional[str] = None
+    device_type: Optional[str] = None
     ports: list[PortResult] = Field(default_factory=list)
     os_matches: list[OSMatch] = Field(default_factory=list)
 
@@ -322,7 +323,7 @@ def _mock_scan(target: str = "10.0.0.0/24", port_filter: str | None = None) -> S
         os_list = [OSMatch(name=d["os"], accuracy=random.randint(90, 99))] if d.get("os") else []
         hosts.append(HostResult(
             ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor"),
-            ports=h_ports, os_matches=os_list,
+            device_type=d.get("type"), ports=h_ports, os_matches=os_list,
         ))
     return ScanResult(command=f"[mock] nmap -sT {target}", hosts=hosts, scan_stats={"elapsed": "2.5", "mode": "mock"})
 
@@ -353,8 +354,10 @@ def _fingerprint_iot(scan: ScanResult) -> list[dict]:
         mac_prefix = host.mac.lower()[:8]
         open_ports = [p.port for p in host.ports if p.state == PortState.OPEN]
         matched_vendor = host.vendor
-        matched_type = None
-        confidence = 60
+        # DB devType (from scan_service) is authoritative — use it first so a
+        # 554-opening NVR isn't misclassed as a camera by the port heuristic.
+        matched_type = host.device_type or None
+        confidence = 95 if host.device_type else 60
 
         for vendor, sig in IOT_SIGNATURES.items():
             if any(mac_prefix.startswith(pfx.lower()) for pfx in sig["mac_prefix"]):
@@ -465,25 +468,179 @@ async def _is_subnet_reachable(target: str) -> bool:
         return False  # On error, use mock
 
 
+# ═══════════════════════════════════════════════════════════════════
+# DB-backed real scanning (preferred over blind nmap in real mode)
+# ═══════════════════════════════════════════════════════════════════
+# In real mode, scan_service already discovers live devices via ARP and
+# fingerprints their ports — storing them in the DB (devOpenPorts). Reading
+# that is instant, always matches the HUD, and never times out. Blind nmap
+# of an entire /24 (254 hosts × 1000 ports) blows past call_tool's 120s
+# timeout, which is why network_scan/iot_fingerprint reported "执行失败".
+
+_REAL_MAC_RE = re.compile(r'^[0-9a-f]{2}(:[0-9a-f]{2}){5}$', re.IGNORECASE)
+
+
+def _parse_port_list(raw) -> list[int]:
+    """Coerce a DB devOpenPorts value (JSON string or list) into list[int]."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    ports = []
+    for p in raw:
+        try:
+            ports.append(int(p))
+        except (TypeError, ValueError):
+            continue
+    return ports
+
+
+def _filter_db_devices(devices: list, target: str) -> list[dict]:
+    """Filter raw DB device rows to in-subnet, online, real-MAC devices.
+
+    Returns a normalized list: [{ip, mac, vendor, type, model, ports:[int]}].
+    Mock/offline devices and config-id placeholder MACs are excluded so the
+    scan reflects only real, currently-online devices.
+    """
+    net = None
+    try:
+        net = ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        pass  # unparseable target (e.g. hostname) → don't filter by subnet
+
+    out = []
+    for d in devices:
+        if not isinstance(d, dict):
+            continue
+        mac = (d.get("devMac") or "").strip()
+        if not _REAL_MAC_RE.match(mac):
+            continue  # skip placeholder/empty/mock MACs
+        if not bool(d.get("devPresentLastScan", 0)):
+            continue  # offline
+        ip = (d.get("devLastIP") or "").strip()
+        if not ip:
+            continue
+        if net is not None:
+            try:
+                if ipaddress.ip_address(ip) not in net:
+                    continue
+            except ValueError:
+                continue
+        out.append({
+            "ip": ip, "mac": mac,
+            "vendor": d.get("devVendor", ""),
+            "type": d.get("devType", ""),
+            "model": d.get("devModel", ""),
+            "ports": _parse_port_list(d.get("devOpenPorts")),
+        })
+    return out
+
+
+def _db_devices_to_scan_result(devices: list[dict], target: str, command_tag: str) -> ScanResult:
+    """Convert normalized DB devices (from _filter_db_devices) into a ScanResult."""
+    hosts = []
+    for d in devices:
+        ports = []
+        for p in d.get("ports") or []:
+            try:
+                pid = int(p)
+            except (TypeError, ValueError):
+                continue
+            ports.append(PortResult(
+                port=pid, state=PortState.OPEN,
+                service=ServiceInfo(name=PORT_SERVICE_MAP.get(pid, "unknown")),
+            ))
+        hosts.append(HostResult(
+            ip=d["ip"], mac=d.get("mac"), state="up",
+            vendor=d.get("vendor"), device_type=d.get("type"), ports=ports,
+        ))
+    return ScanResult(
+        command=f"[real-db] {command_tag} {target}",
+        hosts=hosts,
+        scan_stats={"hosts_up": str(len(hosts)), "mode": "real-db", "source": "scan_service"},
+    )
+
+
+def _known_device_ips(target: str) -> list[str]:
+    """Resolve a subnet target to known device IPs from the topology config
+    (real-mode topology.json). Used by the nmap fallback to scan only known
+    live hosts instead of an entire /24."""
+    try:
+        net = ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        return []
+    ips = []
+    for d in _load_mock_devices():  # real mode → topology.json devices
+        ip = (d.get("ip") or "").strip()
+        if not ip:
+            continue
+        try:
+            if ipaddress.ip_address(ip) in net:
+                ips.append(ip)
+        except ValueError:
+            continue
+    return ips
+
+
+async def _load_real_devices_from_db(target: str) -> list[dict] | None:
+    """Read scan_service's discovered live devices (with ports) from the DB.
+
+    Returns the filtered normalized list (may be empty if no devices online),
+    or None when the DB is unavailable (so the caller can fall back to nmap).
+    """
+    try:
+        from server.services.nx_bridge import get_bridge
+        devices = await get_bridge().get_all_devices()
+    except Exception as e:
+        logger.warning(f"DB load failed, will fall back to nmap/mock: {e}")
+        return None
+    if not devices:
+        return None
+    return _filter_db_devices(devices, target)
+
+
+async def _targeted_nmap_scan(target: str, ports: str | None, scan_type: str,
+                              timing: str, timeout: int) -> ScanResult:
+    """Fallback when the DB has no devices: run a fast targeted nmap on the
+    known device IPs only (-Pn skips host discovery so ICMP-only cameras are
+    still port-scanned), with a limited IoT port set and per-host timeout."""
+    ips = _known_device_ips(target)
+    if not ips:
+        logger.warning(f"No known device IPs in {target} for targeted scan — using mock")
+        return _mock_scan(target, ports)
+    effective_ports = ports or "80,443,554,8000,8080,22,23,1883,502,8443"
+    _validate_ports(effective_ports)
+    args = ["-oX", "-Pn", SCAN_TYPES.get(scan_type, "-sT"),
+            TIMING.get(timing, "-T4"), "--host-timeout=30s", "-p", effective_ports]
+    args.extend(ips)
+    # Cap below call_tool's 120s so a slow scan fails fast instead of hanging.
+    stdout, stderr, rc = await _run_nmap(args, timeout=min(timeout, 90))
+    result = _parse_xml(stdout)
+    if stderr:
+        result.warnings.append(stderr.strip())
+    return result
+
+
 async def _exec_scan(target: str, ports: str | None, scan_type: str, timing: str, timeout: int) -> ScanResult:
     _validate_target(target)
     if _is_mock_mode():
         return _mock_scan(target, ports)
-    if _has_nmap():
-        reachable = await _is_subnet_reachable(target)
-        if not reachable:
-            logger.warning(f"Subnet {target} unreachable, falling back to mock mode")
-            return _mock_scan(target, ports)
-        args = ["-oX", "-", SCAN_TYPES.get(scan_type, "-sT"), TIMING.get(timing, "-T3")]
+    # Real mode: prefer scan_service's DB (live devices + ports) — instant,
+    # never times out, and matches the HUD. Falls back to targeted nmap only
+    # when the DB is unavailable; mock is the last resort.
+    db_devices = await _load_real_devices_from_db(target)
+    if db_devices is not None:
+        result = _db_devices_to_scan_result(db_devices, target, "nmap -sT")
         if ports:
-            _validate_ports(ports)
-            args.extend(["-p", ports])
-        args.append(target)
-        stdout, stderr, rc = await _run_nmap(args, timeout)
-        result = _parse_xml(stdout)
-        if stderr:
-            result.warnings.append(stderr.strip())
+            allowed = {p.strip() for p in ports.split(",")}
+            for h in result.hosts:
+                h.ports = [p for p in h.ports if str(p.port) in allowed]
         return result
+    if _has_nmap():
+        return await _targeted_nmap_scan(target, ports, scan_type, timing, timeout)
     return _mock_scan(target, ports)
 
 
@@ -493,15 +650,19 @@ async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
         devices = _load_mock_devices()
         hosts = [HostResult(ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor")) for d in devices]
         return ScanResult(command=f"[mock] nmap -sn {target}", hosts=hosts, scan_stats={"hosts_up": str(len(devices)), "mode": "mock"})
+    # Real mode: DB-backed host list (live devices only).
+    db_devices = await _load_real_devices_from_db(target)
+    if db_devices is not None:
+        hosts = [HostResult(ip=d["ip"], mac=d.get("mac"), state="up", vendor=d.get("vendor")) for d in db_devices]
+        return ScanResult(command=f"[real-db] nmap -sn {target}", hosts=hosts,
+                          scan_stats={"hosts_up": str(len(hosts)), "mode": "real-db", "source": "scan_service"})
     if _has_nmap():
-        reachable = await _is_subnet_reachable(target)
-        if not reachable:
-            devices = _load_mock_devices()
-            hosts = [HostResult(ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor")) for d in devices]
-            return ScanResult(command=f"[mock] nmap -sn {target}", hosts=hosts, scan_stats={"hosts_up": str(len(devices)), "mode": "mock"})
-        args = ["-oX", "-", "-sn", TIMING.get(timing, "-T3"), target]
-        stdout, stderr, rc = await _run_nmap(args, timeout)
-        return _parse_xml(stdout)
+        ips = _known_device_ips(target)
+        if ips:
+            args = ["-oX", "-sn", "-T4", "--host-timeout=10s"]
+            args.extend(ips)
+            stdout, stderr, rc = await _run_nmap(args, timeout=min(timeout, 60))
+            return _parse_xml(stdout)
     devices = _load_mock_devices()
     hosts = [HostResult(ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor")) for d in devices]
     return ScanResult(command=f"[mock] nmap -sn {target}", hosts=hosts, scan_stats={"hosts_up": str(len(devices)), "mode": "mock"})
@@ -552,7 +713,7 @@ MODE = "nmap" if _has_nmap() else "mock"
 def _host_summary(h: HostResult) -> dict:
     return {
         "ip": h.ip, "mac": h.mac, "hostname": h.hostname,
-        "state": h.state, "vendor": h.vendor,
+        "state": h.state, "vendor": h.vendor, "type": h.device_type,
         "open_ports": [
             {"port": p.port, "protocol": p.protocol,
              "service": p.service.name if p.service else "unknown",
@@ -577,7 +738,7 @@ async def network_scan(target: str, ports: str = "", scan_type: str = "connect",
     logger.info(f"network_scan: target={target} ports={ports} [{MODE}]")
     try:
         result = await _exec_scan(target, ports or None, scan_type, timing, timeout)
-        out = {"mode": MODE, "command": result.command, "hosts_found": len(result.hosts),
+        out = {"mode": result.scan_stats.get("mode", MODE), "command": result.command, "hosts_found": len(result.hosts),
                "hosts": [_host_summary(h) for h in result.hosts], "scan_stats": result.scan_stats}
         if result.warnings:
             out["warnings"] = result.warnings
@@ -599,7 +760,7 @@ async def host_discovery(target: str, timing: str = "normal", timeout: int = 300
     try:
         result = await _exec_discover(target, timing, timeout)
         return json.dumps({
-            "mode": MODE, "command": result.command,
+            "mode": result.scan_stats.get("mode", MODE), "command": result.command,
             "hosts_up": len([h for h in result.hosts if h.state == "up"]),
             "hosts": [{"ip": h.ip, "mac": h.mac, "hostname": h.hostname, "vendor": h.vendor} for h in result.hosts],
             "scan_stats": result.scan_stats,
@@ -668,7 +829,7 @@ async def iot_fingerprint(target: str = "10.0.0.0/24") -> str:
     try:
         scan = await _exec_scan(target, None, "connect", "normal", 300)
         devices = _fingerprint_iot(scan)
-        return json.dumps({"mode": MODE, "target": target, "iot_devices_found": len(devices), "devices": devices},
+        return json.dumps({"mode": scan.scan_stats.get("mode", MODE), "target": target, "iot_devices_found": len(devices), "devices": devices},
                           ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)

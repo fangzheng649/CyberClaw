@@ -616,6 +616,18 @@ def get_device_id_by_ip(ip: str) -> str | None:
     return dev.id if dev else None
 
 
+async def async_get_device_id_by_ip(ip: str) -> str | None:
+    """async 版 get_device_id_by_ip —— 走 async_get_topology。
+
+    sync get_device_by_ip 在 async 上下文（event loop running）会跳过 DB，
+    落到 config 拓扑，返回 config 短 id（如 "camera-1"）而非 DB 推导 id
+    （如 "ds_2cd1023g2_l_01"）—— 导致广播/事件 target id 与 HUD 不一致。
+    """
+    topo = await async_get_topology()
+    dev = next((d for d in topo.devices if d.ip == ip), None)
+    return dev.id if dev else None
+
+
 def get_mac_by_device_id(device_id: str) -> str | None:
     """通过 topology device_id 查找真实 MAC 地址"""
     dev = get_device(device_id)
