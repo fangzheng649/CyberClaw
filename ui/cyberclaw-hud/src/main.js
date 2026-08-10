@@ -688,8 +688,21 @@ function updateMetrics(stats) {
   else { threatEl.textContent = 'LOW'; threatEl.className = 'metric-value secure'; }
 
   dom.valInfected.textContent = `${infected} / ${total}`;
-  dom.valAlerts.textContent = state.alerts.filter(a => a.severity === 'critical').length;
   dom.valIsolated.textContent = isolated;
+  // ALERTS 计数由 refreshAlertCount() 从 DB security_events 派生，不依赖 state.alerts/localStorage
+}
+
+// ALERTS 数字 ← DB security_events 的 critical 计数。
+// 之前用 state.alerts.filter(critical)（WS 累积 + localStorage 残留），会虚高/历史残留。
+// 改为从 DB 真实事件派生，与 chat 事件标签同源。
+async function refreshAlertCount() {
+  try {
+    const resp = await fetch('/api/dashboard/alerts?limit=200');
+    const data = await resp.json();
+    const alerts = data.alerts || [];
+    const crit = alerts.filter(a => (a.severity || '').toLowerCase() === 'critical').length;
+    if (dom.valAlerts) dom.valAlerts.textContent = crit;
+  } catch (e) { /* 保持原值 */ }
 }
 
 function updateScenarioProgress(step, total) {
@@ -1361,6 +1374,7 @@ function handleWSMessage(msg) {
         message: `${msg.title}: ${msg.message}`,
         type: 'notification',
       });
+      refreshAlertCount();  // scheduler 写了 security_events(B.4)，刷新 ALERTS ← DB
       break;
     }
 
@@ -1798,34 +1812,11 @@ async function boot() {
 
   // ── Restore persisted state from localStorage ────────────────
   setLoading(45, 'Restoring previous session...');
-  // Restore alert timeline — directly fill state & DOM without saveState calls
-  const savedAlerts = loadState(KEYS.hudAlerts, []);
-  if (savedAlerts.length > 0) {
-    state.alerts = savedAlerts;
-    state.deviceEvents = loadState(KEYS.hudDeviceEvents, {});
-    // Rebuild alert cards in DOM
-    savedAlerts.slice().reverse().forEach(a => {
-      const card = document.createElement('div');
-      card.className = 'alert-card';
-      card.dataset.severity = a.severity || 'info';
-      const time = a.time || new Date().toLocaleTimeString('zh-CN', { hour12: false });
-      card.innerHTML = `
-        <span class="alert-time">${time}</span>
-        <span class="alert-severity ${a.severity || 'info'}">${a.severity || 'info'}</span>
-        <div class="alert-msg">${a.message || a.type}</div>
-      `;
-      if (a.target || a.source) {
-        card.addEventListener('click', () => focusDevice(a.target || a.source));
-      }
-      dom.alertList.insertBefore(card, dom.alertList.firstChild);
-    });
-    // Trim DOM if needed
-    while (dom.alertList.children.length > 40) {
-      dom.alertList.removeChild(dom.alertList.lastChild);
-    }
-    state.eventCount = savedAlerts.length;
-    dom.footerEvents.textContent = state.eventCount;
-  }
+  // 不再从 localStorage 恢复 alert 列表 —— 之前会残留历史 critical（如 ALERTS 显示 23
+  // 但实际是旧会话累积）。alert 列表从当前会话 WS 累积；ALERTS 数字从 DB security_events
+  // 派生（refreshAlertCount），与 chat 事件标签同源。
+  state.deviceEvents = loadState(KEYS.hudDeviceEvents, {});
+  refreshAlertCount();
   // Restore device scan/CVE/baseline data (in-memory only, no DOM yet)
   state.deviceScanData = loadState(KEYS.hudScanData, {});
   state.baselineData = loadState(KEYS.hudBaselineData, {});

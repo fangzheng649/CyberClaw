@@ -270,34 +270,13 @@ async def _fetch_device_config(device_ip: str) -> dict:
     except Exception:
         pass
 
-    # Strategy 4: Mock fallback
-    mock_configs = {
-        "default": f"""
-!
-version 15.2
-hostname IoT-Gateway
-!
-interface GigabitEthernet0/0
- ip address {device_ip} 255.255.255.0
- no shutdown
-!
-line vty 0 4
- transport input telnet
- password cisco
-!
-snmp-server community public RO
-snmp-server community private RW
-!
-ip http server
-!
-access-list 1 permit 0.0.0.0 255.255.255.255
-!
-no service password-encryption
-!
-""",
-    }
-    await asyncio.sleep(0.05)
-    return {"status": "ok", "config": mock_configs["default"], "method": "mock"}
+    # Strategy 4: 所有获取配置的策略都失败 —— 不造假配置。之前返回 Cisco 路由器模板
+    # （password cisco / snmp public / telnet），导致真实 Hikvision 摄像头被审计出
+    # Cisco 路由器的配置问题 → 假 critical。诚实返回 unavailable，audit_config 据此
+    # 如实报告"无法获取配置"。
+    return {"status": "unavailable",
+            "message": f"无法获取 {device_ip} 配置：SSH 凭据失败 + nmap 不可用",
+            "method": "unavailable"}
 
 
 def _parse_config_lines(config_text: str) -> list[str]:

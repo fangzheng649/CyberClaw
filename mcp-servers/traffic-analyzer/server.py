@@ -467,23 +467,15 @@ async def extract_ioc(capture_id: str = "") -> str:
     logger.info(f"extract_ioc: capture={capture_id or 'latest'}")
     cap_id = capture_id or (max(_captures, key=lambda k: _captures[k].get("started", "")) if _captures else "")
     if not cap_id or cap_id not in _captures:
-        # No capture session — generate mock IoC data for demo/testing
-        mock_indicators = [
-            {"type": "suspicious_port", "detail": "Connection to Telnet port 23 — brute-force target", "severity": "high", "source": "192.168.10.100", "target": "192.168.10.11:23", "port": 23},
-            {"type": "suspicious_port", "detail": "Connection to Reverse Shell port 4444 — Metasploit default", "severity": "critical", "source": "192.168.10.50", "target": "192.168.10.21:4444", "port": 4444},
-            {"type": "scan_behavior", "detail": "Source 192.168.10.100 scanned 15 distinct ports", "severity": "high", "source": "192.168.10.100", "target": "15 ports", "ports_scanned": 15},
-            {"type": "suspicious_dns", "detail": "Suspicious TLD (.xyz): c2-update.xyz", "severity": "medium", "source": "192.168.10.31", "target": "c2-update.xyz"},
-            {"type": "suspicious_dns", "detail": "Random-looking subdomain (possible DGA): a7x9b2k4.update.ml", "severity": "high", "source": "192.168.10.13", "target": "a7x9b2k4.update.ml"},
-        ]
+        # 无抓包会话 —— 不造假 IoC。之前返回 5 条 mock（含假 critical "反向 Shell 4444"，
+        # 网段 192.168.10.x 都对不上实际网络），导致 scheduler 每 10 分钟误报 critical。
+        # 诚实返回 0 + 提示需先抓包/装 tshark。
         return json.dumps({
-            "mode": "mock",
-            "iocs_found": len(mock_indicators),
-            "indicators": mock_indicators,
-            "message": "Mock IoC data — no active capture session",
+            "mode": "unavailable",
+            "iocs_found": 0,
+            "indicators": [],
+            "message": "无抓包数据 —— 需先启动抓包(start_capture)或安装 tshark 才能提取真实 IoC",
         }, ensure_ascii=False, indent=2)
-        return json.dumps({"iocs_found": 0, "indicators": [],
-                           "message": "No capture data available. Start a capture first."},
-                          ensure_ascii=False, indent=2)
 
     cap = _captures[cap_id]
     packets = _get_packets_for_capture(cap)

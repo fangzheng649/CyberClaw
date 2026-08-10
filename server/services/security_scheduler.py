@@ -420,12 +420,31 @@ class SecurityScheduler:
                 severity = "warning"
             elif issues > 0:
                 title = f"安全检查: {label}"
-                message = f"{label} 发现 {issues} 个问题。{summary}"
-                severity = "critical" if issues >= 5 else "warning"
+                # mock/unavailable 结果不推 critical（避免假告警）：traffic mock IoC、
+                # config-audit 假配置、cve mock fallback 等都曾因 issues>=5 被误报 critical
+                _r = result if isinstance(result, dict) else {}
+                rmode = _r.get("mode") or _r.get("source")
+                if rmode in ("mock", "unavailable"):
+                    severity = "info"
+                    message = f"{label} 数据来源为 {rmode}（非真实采集），发现 {issues} 项，不升级为告警。{summary}"
+                else:
+                    severity = "critical" if issues >= 5 else "warning"
+                    message = f"{label} 发现 {issues} 个问题。{summary}"
             else:
                 title = f"任务完成: {label}"
                 message = f"{label} 执行成功。{summary}" if summary else f"{label} 执行成功，未发现问题。"
                 severity = "info"
+
+            # 也写 security_events —— 让 /api/dashboard/alerts（chat 事件标签/HUD）
+            # 能读到 scheduler 告警。否则 scheduler 告警只在 cyberclaw_notifications，
+            # chat 事件看不到（两套管道分裂的根因）。
+            try:
+                from .nx_bridge import get_bridge
+                await get_bridge().record_security_event(
+                    source_type="scheduled_check", severity=severity,
+                    message=f"{title}: {message}", source=name, target=name)
+            except Exception as _e:
+                logger.debug(f"record_security_event(scheduler) failed: {_e}")
 
             return await bridge._send(
                 title=title, message=message,
