@@ -650,27 +650,19 @@ async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
         devices = _load_mock_devices()
         hosts = [HostResult(ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor")) for d in devices]
         return ScanResult(command=f"[mock] nmap -sn {target}", hosts=hosts, scan_stats={"hosts_up": str(len(devices)), "mode": "mock"})
-    # Real mode: 后台触发 scan_service.trigger_scan —— 与 HUD 的 S 键完全一致：
-    # ARP + 端口指纹 + 入库(Devices 表) + 广播 device_discovered → HUD 设备列表刷新。
-    # 异步触发不等待(端口指纹耗时)，扫描完成后设备经 device_discovered 自动推送全局。
+    # Real mode: ARP 快速发现(即时报设备数) + 后台 trigger_scan 入库广播(与 S 键一致)。
+    # _arp_table_scan 即时返回在线设备(消息报告发现 N 台)；trigger_scan_background 后台走
+    # 完整流程(端口指纹 + 写 Devices + 广播 device_discovered)，保证入库又不阻塞本任务。
     try:
-        from server.services.scan_service import get_scan_service
-        get_scan_service().trigger_scan_background()  # 后台触发，与 S 键入库一致
-        return ScanResult(command=f"[real-scan] nmap -sn {target} (background)", hosts=[],
-                          scan_stats={"hosts_up": "0", "mode": "real-scan", "source": "scan_service",
-                                      "note": "网络扫描已执行，发现的设备已入库并实时推送"})
-    except Exception as e:
-        logger.warning(f"trigger_scan failed, fallback to ARP table: {e}")
-    # fallback: 直接 ARP 表发现(不入库, 仅本任务可见)
-    try:
-        from server.services.scan_service import _arp_table_scan
+        from server.services.scan_service import _arp_table_scan, get_scan_service
         loop = asyncio.get_event_loop()
         found = await loop.run_in_executor(None, _arp_table_scan, target)
+        get_scan_service().trigger_scan_background()
         hosts = [HostResult(ip=d["ip"], mac=d.get("mac"), state="up", vendor=d.get("vendor")) for d in found]
-        return ScanResult(command=f"[real-arp] nmap -sn {target}", hosts=hosts,
-                          scan_stats={"hosts_up": str(len(hosts)), "mode": "real-arp", "source": "arp_table"})
+        return ScanResult(command=f"[real-scan] nmap -sn {target}", hosts=hosts,
+                          scan_stats={"hosts_up": str(len(hosts)), "mode": "real-scan", "source": "arp+scan_service"})
     except Exception as e:
-        logger.warning(f"ARP discovery failed, fallback to nmap/mock: {e}")
+        logger.warning(f"network scan failed, fallback to nmap/mock: {e}")
     if _has_nmap():
         ips = _known_device_ips(target)
         if ips:

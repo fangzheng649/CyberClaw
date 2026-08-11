@@ -348,6 +348,13 @@ class SecurityScheduler:
         if not isinstance(result, dict):
             return 0
         # Direct issue count fields
+        # CVE 批量结果(check_all_topology_cves): 只算型号直接命中的 CVE。
+        # fallback=vendor 是厂商级(非直接命中, 固件较新无公开漏洞的安全信号), 不计为问题。
+        cve_results = result.get("results")
+        if isinstance(cve_results, list) and cve_results and any(
+                "fallback" in r for r in cve_results if isinstance(r, dict)):
+            return sum(r.get("total_cves", 0) for r in cve_results
+                       if isinstance(r, dict) and not r.get("fallback"))
         for key in ("issues_found", "vulnerabilities_found", "failed_checks",
                      "iocs_found", "total_findings", "total_cves", "weak_devices"):
             if key in result:
@@ -371,9 +378,6 @@ class SecurityScheduler:
         if not isinstance(result, dict):
             return ""
         if name == "network_scan":
-            note = (result.get("scan_stats") or {}).get("note")
-            if note:
-                return note
             hosts = result.get("hosts_up", 0)
             return f"扫描完成，发现 {hosts} 台设备在线"
         if name == "cve_check":
@@ -382,11 +386,12 @@ class SecurityScheduler:
             if isinstance(results, list) and results:
                 crit = sum(r.get("critical", 0) for r in results if isinstance(r, dict))
                 high = sum(r.get("high", 0) for r in results if isinstance(r, dict))
-                vendor_fb = sum(1 for r in results if isinstance(r, dict) and r.get("fallback") == "vendor")
-                if total == 0:
+                cve_devs = [r for r in results if isinstance(r, dict) and r.get("total_cves", 0) > 0]
+                direct = [r for r in cve_devs if not r.get("fallback")]
+                if not cve_devs:
                     return f"检查 {len(results)} 台设备，未发现公开漏洞"
-                if vendor_fb == len([r for r in results if isinstance(r, dict) and r.get("total_cves", 0) > 0]):
-                    return f"检查 {len(results)} 台设备，厂商级 CVE {total} 个（均非型号直接命中，固件较新，建议对照修复版本确认）"
+                if not direct:
+                    return f"检查 {len(results)} 台设备，未发现型号级直接漏洞（固件较新；{total} 个厂商级 CVE 仅供参考，建议对照修复版本确认）"
                 return f"检查 {len(results)} 台设备，共 {total} 个 CVE（{crit} 严重，{high} 高危）"
             crit = result.get("critical", 0)
             high = result.get("high", 0)
