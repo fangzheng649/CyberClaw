@@ -32,9 +32,9 @@ LEGACY_CHECKS = {
         "notify_on": ["new_device", "device_down"],
     },
     "cve_check": {
-        "tool_server": "cve-intel", "tool_name": "check_device_vulns",
-        "tool_args": {"vendor": "Hikvision", "min_severity": "HIGH"},
-        "interval_seconds": 3600,
+        "tool_server": "cve-intel", "tool_name": "check_all_topology_cves",
+        "tool_args": {"min_severity": "HIGH"},
+        "interval_seconds": 86400,
         "notify_on": ["new_vulnerability"],
     },
     "baseline_check": {
@@ -42,15 +42,15 @@ LEGACY_CHECKS = {
         "tool_args": {"detailed": True}, "interval_seconds": 1800,
         "notify_on": ["score_drop"],
     },
-    "traffic_analysis": {
-        "tool_server": "traffic-analyzer", "tool_name": "extract_ioc",
-        "tool_args": {}, "interval_seconds": 600,
-        "notify_on": ["ioc_found"],
-    },
     "config_audit": {
         "tool_server": "config-audit", "tool_name": "audit_config",
         "tool_args": {}, "interval_seconds": 3600,
         "notify_on": ["misconfiguration"],
+    },
+    "weak_password_check": {
+        "tool_server": "nmap-scan", "tool_name": "default_credential_check",
+        "tool_args": {"target": "topology"}, "interval_seconds": 604800,
+        "notify_on": ["weak_credential"],
     },
 }
 
@@ -246,7 +246,7 @@ class SecurityScheduler:
                 "id": name,
                 "name": {
                     "network_scan": "网络扫描", "cve_check": "CVE 漏洞检查",
-                    "baseline_check": "安全基线检查", "traffic_analysis": "流量分析",
+                    "baseline_check": "安全基线检查",
                     "config_audit": "配置审计",
                 }.get(name, name),
                 "type": "preset",
@@ -273,7 +273,7 @@ class SecurityScheduler:
                 "id": name,
                 "name": {
                     "network_scan": "网络扫描", "cve_check": "CVE 漏洞检查",
-                    "baseline_check": "安全基线检查", "traffic_analysis": "流量分析",
+                    "baseline_check": "安全基线检查",
                     "config_audit": "配置审计",
                 }.get(name, name),
                 "type": "preset", **cfg,
@@ -349,7 +349,7 @@ class SecurityScheduler:
             return 0
         # Direct issue count fields
         for key in ("issues_found", "vulnerabilities_found", "failed_checks",
-                     "iocs_found", "total_findings", "total_cves"):
+                     "iocs_found", "total_findings", "total_cves", "weak_devices"):
             if key in result:
                 return result[key]
         # Baseline-specific: total_fail / critical_failures
@@ -375,6 +375,16 @@ class SecurityScheduler:
             return f"扫描完成，发现 {hosts} 台设备在线"
         if name == "cve_check":
             total = result.get("total_cves", 0)
+            results = result.get("results") or []
+            if isinstance(results, list) and results:
+                crit = sum(r.get("critical", 0) for r in results if isinstance(r, dict))
+                high = sum(r.get("high", 0) for r in results if isinstance(r, dict))
+                vendor_fb = sum(1 for r in results if isinstance(r, dict) and r.get("fallback") == "vendor")
+                if total == 0:
+                    return f"检查 {len(results)} 台设备，未发现公开漏洞"
+                if vendor_fb == len([r for r in results if isinstance(r, dict) and r.get("total_cves", 0) > 0]):
+                    return f"检查 {len(results)} 台设备，厂商级 CVE {total} 个（均非型号直接命中，固件较新，建议对照修复版本确认）"
+                return f"检查 {len(results)} 台设备，共 {total} 个 CVE（{crit} 严重，{high} 高危）"
             crit = result.get("critical", 0)
             high = result.get("high", 0)
             return f"发现 {total} 个 CVE（{crit} 个严重，{high} 个高危）"
@@ -397,6 +407,10 @@ class SecurityScheduler:
             high = result.get("high", 0)
             device = result.get("device", "未知设备")
             return f"审计设备 {device}，发现 {findings} 个问题（{crit} 严重，{high} 高危）"
+        if name == "weak_password_check":
+            weak = result.get("weak_devices", 0)
+            checked = result.get("devices_checked", 0)
+            return f"检查 {checked} 台设备，{weak} 台存在弱口令"
         return str(result)[:200]
 
     async def _notify_if_needed(self, name, task, result, issues, bypass_dedup=False):
@@ -416,40 +430,43 @@ class SecurityScheduler:
             is_error = isinstance(result, dict) and "error" in result
             summary = self._build_result_summary(name, result) if isinstance(result, dict) else ""
 
+            # title 含任务类型 + 名称（label 只出现一次）；detail 是正文，不再前缀 label，
+            # 也不重复 summary 里已有的数字。
             if is_error:
-                title = f"任务失败: {label}"
-                message = f"{label} 执行出错: {str(result['error'])[:150]}"
+                title = f"任务失败 · {label}"
+                detail = f"执行出错：{str(result['error'])[:150]}"
                 severity = "warning"
             elif issues > 0:
-                title = f"安全检查: {label}"
-                # mock/unavailable 结果不推 critical（避免假告警）：traffic mock IoC、
-                # config-audit 假配置、cve mock fallback 等都曾因 issues>=5 被误报 critical
+                title = f"安全检查 · {label}"
+                # mock/unavailable 结果不推 critical（避免假告警）
                 _r = result if isinstance(result, dict) else {}
                 rmode = _r.get("mode") or _r.get("source")
                 if rmode in ("mock", "unavailable"):
                     severity = "info"
-                    message = f"{label} 数据来源为 {rmode}（非真实采集），发现 {issues} 项，不升级为告警。{summary}"
+                    detail = f"数据来源 {rmode}（非真实采集），不升级为告警。{summary}".rstrip("。 ")
                 else:
                     severity = "critical" if issues >= 5 else "warning"
-                    message = f"{label} 发现 {issues} 个问题。{summary}"
+                    detail = summary or f"发现 {issues} 个问题"
             else:
-                title = f"任务完成: {label}"
-                message = f"{label} 执行成功。{summary}" if summary else f"{label} 执行成功，未发现问题。"
+                title = f"任务完成 · {label}"
+                detail = summary or "执行成功，未发现问题"
                 severity = "info"
 
-            # 也写 security_events —— 让 /api/dashboard/alerts（chat 事件标签/HUD）
-            # 能读到 scheduler 告警。否则 scheduler 告警只在 cyberclaw_notifications，
-            # chat 事件看不到（两套管道分裂的根因）。
+            # security_events.message = title（类型+名称）+ 正文，label/数字都不再重复
+            event_msg = f"{title}：{detail}" if detail else title
+
+            # 写 security_events —— chat 事件界面/HUD 从 DB 读 scheduler 告警。
+            # 不传 source/target：scheduler 任务无设备流向，避免显示无意义的 "cve_check → cve_check"
             try:
                 from .nx_bridge import get_bridge
                 await get_bridge().record_security_event(
                     source_type="scheduled_check", severity=severity,
-                    message=f"{title}: {message}", source=name, target=name)
+                    message=event_msg)
             except Exception as _e:
                 logger.debug(f"record_security_event(scheduler) failed: {_e}")
 
             return await bridge._send(
-                title=title, message=message,
+                title=title, message=detail,
                 severity=severity, section="scheduled_checks",
                 task_type=name,
                 extra_data=result if isinstance(result, dict) else None,

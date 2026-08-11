@@ -196,6 +196,16 @@ class NXBridge:
     def _sync_record_security_event(self, source_type, severity, message, **kwargs):
         conn = get_temp_db_connection()
         try:
+            # 近期去重：60s 内已有相同 source_type+message 则跳过，避免重复 trigger /
+            # 双管道通知(scheduler 既 record 又 _send)产生重复条目。正常周期检查间隔
+            # 远 >60s，不同事件的 message 也不同，历史轨迹与多样性不受影响。
+            dup = conn.execute(
+                "SELECT 1 FROM security_events WHERE source_type=? AND message=? "
+                "AND timestamp >= datetime('now','-60 seconds') LIMIT 1",
+                (source_type, message),
+            ).fetchone()
+            if dup:
+                return None
             conn.execute(
                 """INSERT INTO security_events
                    (source_type, severity, message, source, target, target_mac, details, fsm_state)

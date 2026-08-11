@@ -547,6 +547,9 @@ class ScanService:
                         target=ip, source="scan_service")
                 except Exception as e:
                     logger.debug(f"record_security_event(device_status) failed: {e}")
+                # 事件驱动：新设备上线 → 异步触发该设备 CVE 检查（命中缓存秒回，不阻塞广播）
+                if msg.get("type") == "device_discovered":
+                    asyncio.create_task(_trigger_cve_check_for_device(mac))
 
 
 # 单例
@@ -558,3 +561,42 @@ def get_scan_service() -> ScanService:
     if _service is None:
         _service = ScanService()
     return _service
+
+
+def _norm_mac(m: str) -> str:
+    return re.sub(r"[:\-]", "", (m or "").lower())
+
+
+async def _trigger_cve_check_for_device(mac: str):
+    """新设备上线 → 按 mac 从 topology 读 model/firmware → 查 CVE（命中缓存秒回）→ 记 security_event。
+
+    事件驱动的 CVE 检测：不再固定周期全量打 NVD，而是设备上线时增量查一次，
+    结果由 cve-intel 按 (vendor,model,firmware) 持久缓存。"""
+    try:
+        from .topology_service import load_topology_config
+        topo = load_topology_config()
+        nm = _norm_mac(mac)
+        dev = next((d for d in topo.get("devices", []) if _norm_mac(d.get("mac", "")) == nm), None)
+        if not dev or not dev.get("model"):
+            return  # topology 无此设备或无型号 → CVE 无法定位，跳过
+        model = dev.get("model", "")
+        firmware = dev.get("firmware_version", "")
+        vendor = dev.get("vendor", "")
+        ip = dev.get("ip", "")
+        name = dev.get("name", model)
+        from .mcp_tool_service import call_tool
+        result = await call_tool("cve-intel", "check_device_vulns",
+                                 vendor=vendor, model=model, firmware=firmware, min_severity="HIGH")
+        if not isinstance(result, dict) or result.get("error"):
+            return
+        total = result.get("total_cves", 0)
+        crit = result.get("critical", 0)
+        high = result.get("high", 0)
+        sev = "critical" if crit > 0 else "warning" if high > 0 else "info"
+        from .nx_bridge import get_bridge
+        await get_bridge().record_security_event(
+            source_type="cve_check", severity=sev,
+            message=f"CVE 检查 · {name}：发现 {total} 个 CVE（{crit} 严重，{high} 高危，固件 {firmware or '未知'}）",
+            target=ip, source="cve_check")
+    except Exception as e:
+        logger.debug(f"CVE trigger for {mac} failed: {e}")

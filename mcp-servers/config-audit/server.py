@@ -344,30 +344,14 @@ async def audit_config(device_ip: str = "auto") -> str:
     Args:
         device_ip: Device IP to audit. Default: 'auto' (auto-detect first reachable device).
     """
-    # Auto-detect: find first device with SSH open
-    if device_ip == "auto" or not device_ip:
-        found = _find_first_ssh_device()
-        if found:
-            device_ip = found
-            logger.info(f"audit_config: auto-detected device {device_ip}")
-        else:
-            # Fall back to first topology device
-            devices = _load_topology_devices()
-            if devices:
-                device_ip = devices[0].get("ip", "192.168.10.1")
-            else:
-                device_ip = "192.168.10.1"
-
-    logger.info(f"audit_config: {device_ip}")
-
-    # Mock mode: skip real network ops, return mock audit
+    # Mock 模式优先（演示）—— 不依赖真实 SSH 设备即可展示审计能力
     if _is_mock_mode():
         logger.info("Mock mode — returning simulated config audit")
         devices = _load_topology_devices()
-        dev = next((d for d in devices if d.get("ip") == device_ip), devices[0] if devices else {})
+        dev = devices[0] if devices else {}
         return json.dumps({
             "mode": "mock",
-            "device_ip": device_ip,
+            "device_ip": dev.get("ip", device_ip),
             "device_name": dev.get("name", "Unknown"),
             "findings": [
                 {"severity": "critical", "rule": "default-credentials", "issue": f"{dev.get('vendor', 'Device')} 设备使用默认密码",
@@ -382,6 +366,21 @@ async def audit_config(device_ip: str = "auto") -> str:
             "score": 72,
         }, ensure_ascii=False, indent=2)
 
+    # 实战：auto 自动探测首个 SSH 设备；找不到则诚实报告，不硬扫 topology[0]
+    # （硬扫会退化为端口扫描，与 baseline 重叠，且拿不到 running-config 无配置审计价值）
+    if device_ip == "auto" or not device_ip:
+        found = _find_first_ssh_device()
+        if found:
+            device_ip = found
+            logger.info(f"audit_config: auto-detected SSH device {device_ip}")
+        else:
+            return json.dumps({
+                "status": "no_ssh_device",
+                "message": "当前网络无支持 SSH 的设备 —— 配置审计需 SSH/Telnet 凭据拉取 running-config",
+                "hint": "接入支持 SSH 的网络设备(交换机/路由器)并配置 CYBERCLAW_SSH_USER / CYBERCLAW_SSH_PASS",
+            }, ensure_ascii=False, indent=2)
+
+    logger.info(f"audit_config: {device_ip}")
     result = await _fetch_device_config(device_ip)
 
     if result.get("status") != "ok":

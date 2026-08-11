@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class CreateTaskRequest(BaseModel):
+    id: Optional[str] = None
     name: str
     type: str = "custom"
     tool_server: Optional[str] = None

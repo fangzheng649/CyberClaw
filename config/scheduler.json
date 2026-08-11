@@ -15,37 +15,14 @@
       "interval_seconds": 300,
       "cron_expr": null,
       "run_at": null,
-      "enabled": true,
+      "enabled": false,
       "paused": true,
       "notify_on": [
         "new_device",
         "device_down"
       ],
-      "last_run_ts": 1786178920.4435723,
-      "run_count": 636
-    },
-    {
-      "id": "cve_check",
-      "name": "CVE 漏洞检查",
-      "type": "preset",
-      "tool_server": "cve-intel",
-      "tool_name": "check_device_vulns",
-      "tool_args": {
-        "vendor": "Hikvision",
-        "min_severity": "HIGH"
-      },
-      "prompt": "",
-      "schedule_mode": "interval",
-      "interval_seconds": 3600,
-      "cron_expr": null,
-      "run_at": null,
-      "enabled": true,
-      "paused": false,
-      "notify_on": [
-        "new_vulnerability"
-      ],
-      "last_run_ts": 1786199651.7619524,
-      "run_count": 78
+      "last_run_ts": 1786453255.9759524,
+      "run_count": 643
     },
     {
       "id": "baseline_check",
@@ -61,33 +38,13 @@
       "interval_seconds": 1800,
       "cron_expr": null,
       "run_at": null,
-      "enabled": true,
+      "enabled": false,
       "paused": false,
       "notify_on": [
         "score_drop"
       ],
-      "last_run_ts": 1786201452.4344847,
-      "run_count": 132
-    },
-    {
-      "id": "traffic_analysis",
-      "name": "流量分析",
-      "type": "preset",
-      "tool_server": "traffic-analyzer",
-      "tool_name": "extract_ioc",
-      "tool_args": {},
-      "prompt": "",
-      "schedule_mode": "interval",
-      "interval_seconds": 600,
-      "cron_expr": null,
-      "run_at": null,
-      "enabled": true,
-      "paused": false,
-      "notify_on": [
-        "ioc_found"
-      ],
-      "last_run_ts": 1786201449.2625182,
-      "run_count": 360
+      "last_run_ts": 1786452251.5339506,
+      "run_count": 187
     },
     {
       "id": "config_audit",
@@ -101,13 +58,57 @@
       "interval_seconds": 3600,
       "cron_expr": null,
       "run_at": null,
-      "enabled": true,
+      "enabled": false,
       "paused": false,
       "notify_on": [
         "misconfiguration"
       ],
-      "last_run_ts": 1786199651.0134573,
-      "run_count": 83
+      "last_run_ts": 1786453260.9777915,
+      "run_count": 107
+    },
+    {
+      "id": "cve_check",
+      "name": "CVE 漏洞检查",
+      "type": "preset",
+      "tool_server": "cve-intel",
+      "tool_name": "check_all_topology_cves",
+      "tool_args": {
+        "min_severity": "HIGH"
+      },
+      "prompt": "",
+      "schedule_mode": "interval",
+      "interval_seconds": 86400,
+      "cron_expr": null,
+      "run_at": null,
+      "enabled": false,
+      "paused": false,
+      "notify_on": [
+        "new_vulnerability"
+      ],
+      "last_run_ts": 1786458386.0689797,
+      "run_count": 2
+    },
+    {
+      "id": "weak_password_check",
+      "name": "弱口令检测",
+      "type": "preset",
+      "tool_server": "nmap-scan",
+      "tool_name": "default_credential_check",
+      "tool_args": {
+        "target": "topology"
+      },
+      "prompt": "",
+      "schedule_mode": "interval",
+      "interval_seconds": 604800,
+      "cron_expr": null,
+      "run_at": null,
+      "enabled": false,
+      "paused": false,
+      "notify_on": [
+        "weak_credential"
+      ],
+      "last_run_ts": 1786453303.0998726,
+      "run_count": 1
     }
   ]
 }

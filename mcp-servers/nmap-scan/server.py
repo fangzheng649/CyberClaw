@@ -650,12 +650,17 @@ async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
         devices = _load_mock_devices()
         hosts = [HostResult(ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor")) for d in devices]
         return ScanResult(command=f"[mock] nmap -sn {target}", hosts=hosts, scan_stats={"hosts_up": str(len(devices)), "mode": "mock"})
-    # Real mode: DB-backed host list (live devices only).
-    db_devices = await _load_real_devices_from_db(target)
-    if db_devices is not None:
-        hosts = [HostResult(ip=d["ip"], mac=d.get("mac"), state="up", vendor=d.get("vendor")) for d in db_devices]
-        return ScanResult(command=f"[real-db] nmap -sn {target}", hosts=hosts,
-                          scan_stats={"hosts_up": str(len(hosts)), "mode": "real-db", "source": "scan_service"})
+    # Real mode: ARP 表发现（复用 scan_service._arp_table_scan：Windows arp -a + ping-sweep，
+    # 主动发现当前在线设备）。替代旧的 real-db（被动读 scan_service 写入的 DB，未手动扫描时 hosts=0）。
+    try:
+        from server.services.scan_service import _arp_table_scan
+        loop = asyncio.get_event_loop()
+        found = await loop.run_in_executor(None, _arp_table_scan, target)
+        hosts = [HostResult(ip=d["ip"], mac=d.get("mac"), state="up", vendor=d.get("vendor")) for d in found]
+        return ScanResult(command=f"[real-arp] nmap -sn {target}", hosts=hosts,
+                          scan_stats={"hosts_up": str(len(hosts)), "mode": "real-arp", "source": "arp_table"})
+    except Exception as e:
+        logger.warning(f"ARP discovery failed, fallback to nmap/mock: {e}")
     if _has_nmap():
         ips = _known_device_ips(target)
         if ips:
@@ -835,25 +840,134 @@ async def iot_fingerprint(target: str = "10.0.0.0/24") -> str:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
-@mcp.tool()
-async def default_credential_check(target: str = "10.0.0.0/24") -> str:
-    """Check for default credentials on discovered IoT devices.
+# ── 弱口令真验证（限量默认口令，避免锁账户）──────────────────────────
+# IoT 头号风险：Mirai 僵尸网靠扫默认口令感染百万设备。这里只试顶部 3 对最高概率
+# 默认口令，命中即停，慢速（1s 间隔）—— 是"验证"而非"爆破"，把锁账户风险降到很低。
+_DEFAULT_CREDS = [
+    ("admin", "admin"),
+    ("admin", "12345"),
+    ("admin", ""),
+    ("admin", "password"),
+    ("root", "root"),
+]
 
-    Scans for Telnet/SSH/HTTP and reports devices likely using default credentials.
+
+def _probe_port(ip: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        import socket as _s
+        sock = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+        sock.settimeout(timeout)
+        r = sock.connect_ex((ip, port))
+        sock.close()
+        return r == 0
+    except Exception:
+        return False
+
+
+async def _try_telnet_login(ip: str, username: str, password: str) -> bool:
+    """Telnet 登录尝试。返回 True=凭证有效。"""
+    try:
+        import telnetlib
+    except ImportError:
+        return False
+    try:
+        tn = telnetlib.Telnet(ip, timeout=5)
+        try:
+            tn.read_until(b"ogin:", timeout=4)
+            tn.write(username.encode() + b"\r\n")
+            tn.read_until(b"assword:", timeout=4)
+            tn.write(password.encode() + b"\r\n")
+            await asyncio.sleep(1.0)
+            resp = tn.read_very_eager().decode("utf-8", errors="replace")
+        finally:
+            tn.close()
+        low = resp.lower()
+        if any(m in low for m in ["invalid", "incorrect", "fail", "denied", "wrong", "bad "]):
+            return False
+        return any(p in resp for p in ["#", "$", ">", "welcome"]) or len(resp.strip()) > 3
+    except Exception:
+        return False
+
+
+async def _try_ssh_login(ip: str, username: str, password: str) -> bool:
+    """SSH 登录尝试。返回 True=凭证有效。"""
+    try:
+        import paramiko
+    except ImportError:
+        return False
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(ip, port=22, username=username, password=password,
+                       timeout=5, allow_agent=False, look_for_keys=False)
+        return True
+    except paramiko.AuthenticationException:
+        return False
+    except Exception:
+        return False
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+@mcp.tool()
+async def default_credential_check(target: str = "topology", services: str = "telnet,ssh") -> str:
+    """弱口令真验证：对设备的 Telnet/SSH 服务尝试限量默认口令登录。
+
+    安全策略（避免锁账户/封 IP）：
+    - 每设备每服务只试顶部 3 对最高概率默认口令，命中即停
+    - 只试常见默认账户（admin/root），不枚举用户名
+    - 慢速：每次尝试间隔 1s
+    - 默认只测 topology 白名单设备
 
     Args:
-        target: Network to scan. Default: 10.0.0.0/24.
+        target: 设备 IP 或 'topology'（遍历 topology 全部设备）。默认 topology。
+        services: 检测服务，逗号分隔。默认 'telnet,ssh'。
     """
-    logger.info(f"default_credential_check: target={target} [{MODE}]")
-    try:
-        scan = await _exec_scan(target, "22,23,80,443,8080", "connect", "normal", 300)
-        results = _check_credentials(scan)
-        vuln_count = len([r for r in results if r.get("vulnerable")])
-        return json.dumps({"mode": MODE, "target": target, "devices_checked": len(results),
-                           "vulnerable_devices": vuln_count, "results": results},
-                          ensure_ascii=False, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    logger.info(f"default_credential_check: target={target} services={services}")
+    if target == "topology" or not target:
+        ips = [d["ip"] for d in _load_mock_devices() if d.get("ip")]
+    else:
+        ips = [target]
+
+    svc_set = {s.strip().lower() for s in services.split(",") if s.strip()}
+    results = []
+
+    for ip in ips:
+        dev = {"ip": ip, "services_checked": [], "weak": False, "credentials": []}
+        open_ports = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: {p: _probe_port(ip, p) for p in (22, 23)})
+        if open_ports.get(23) and "telnet" in svc_set:
+            for username, password in _DEFAULT_CREDS[:3]:
+                await asyncio.sleep(1.0)
+                if await _try_telnet_login(ip, username, password):
+                    dev["credentials"].append({"service": "telnet", "username": username,
+                                               "password": password or "(空)"})
+                    dev["weak"] = True
+                    break
+            dev["services_checked"].append("telnet")
+        if open_ports.get(22) and "ssh" in svc_set:
+            for username, password in _DEFAULT_CREDS[:3]:
+                await asyncio.sleep(1.0)
+                if await _try_ssh_login(ip, username, password):
+                    dev["credentials"].append({"service": "ssh", "username": username,
+                                               "password": password or "(空)"})
+                    dev["weak"] = True
+                    break
+            dev["services_checked"].append("ssh")
+        if dev["services_checked"]:
+            results.append(dev)
+
+    weak_count = sum(1 for r in results if r["weak"])
+    return json.dumps({
+        "mode": "real_credential_check",
+        "devices_checked": len(results),
+        "weak_devices": weak_count,
+        "note": "限量默认口令真验证（每服务最多 3 对，命中即停，1s 间隔避免锁账户）",
+        "results": results,
+    }, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
