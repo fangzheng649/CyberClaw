@@ -528,6 +528,25 @@ class ScanService:
                     await self._broadcast(msg)
                 except Exception as e:
                     logger.debug(f"broadcast device event failed: {e}")
+                # 也写 security_events —— 让 chat 事件界面/HUD alert timeline 都能从 DB
+                # 看到设备状态变更（发现/离线/恢复在线），不只 WS 实时推送。
+                try:
+                    from .nx_bridge import get_bridge
+                    d = msg.get("device") or {}
+                    ip = d.get("ip") or ""
+                    name = d.get("name") or ip
+                    ws_type = msg.get("type", "")
+                    if ws_type == "device_offline":
+                        sev, m = "warning", f"设备离线: {name} ({ip}) 失去连接"
+                    elif ws_type == "device_back_online":
+                        sev, m = "info", f"设备恢复: {name} ({ip}) 重新在线"
+                    else:  # device_discovered
+                        sev, m = "info", f"设备发现: {name} ({ip}) 上线"
+                    await get_bridge().record_security_event(
+                        source_type="device_status", severity=sev, message=m,
+                        target=ip, source="scan_service")
+                except Exception as e:
+                    logger.debug(f"record_security_event(device_status) failed: {e}")
 
 
 # 单例

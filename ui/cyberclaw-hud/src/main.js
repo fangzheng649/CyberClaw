@@ -705,6 +705,39 @@ async function refreshAlertCount() {
   } catch (e) { /* 保持原值 */ }
 }
 
+// alert timeline 从 DB security_events backfill（与 chat 事件界面同源）。
+// 之前纯 WS 当前会话累积（刷新后空），现在初始化从 DB 拉历史 + WS 实时增量。
+async function backfillAlertsFromDB() {
+  try {
+    const resp = await fetch('/api/dashboard/alerts?limit=50');
+    const data = await resp.json();
+    const alerts = (data.alerts || []).map(a => ({
+      severity: (a.severity || 'info').toLowerCase(),
+      message: a.message || a.title || a.type || '',
+      type: a.source_type || a.type || 'security_event',
+      target: a.target || a.source || '',
+      time: a.created_at ? new Date(a.created_at).toLocaleTimeString('zh-CN', { hour12: false }) : '',
+    }));
+    state.alerts = alerts;
+    if (dom.alertList) {
+      dom.alertList.innerHTML = '';
+      alerts.slice().reverse().forEach(a => {
+        const card = document.createElement('div');
+        card.className = 'alert-card';
+        card.dataset.severity = a.severity || 'info';
+        card.innerHTML = `<span class="alert-time">${a.time || ''}</span><span class="alert-severity ${a.severity || 'info'}">${a.severity || 'info'}</span><div class="alert-msg">${a.message}</div>`;
+        if (a.target) card.addEventListener('click', () => focusDevice(a.target));
+        dom.alertList.insertBefore(card, dom.alertList.firstChild);
+      });
+    }
+    state.eventCount = alerts.length;
+    if (dom.footerEvents) dom.footerEvents.textContent = state.eventCount;
+    // ALERTS 也从 backfill 的数据派生
+    const crit = alerts.filter(a => a.severity === 'critical').length;
+    if (dom.valAlerts) dom.valAlerts.textContent = crit;
+  } catch (e) { /* ignore */ }
+}
+
 function updateScenarioProgress(step, total) {
   const pct = total > 0 ? (step / total) * 100 : 0;
   dom.progressBar.style.width = `${pct}%`;
@@ -1812,11 +1845,10 @@ async function boot() {
 
   // ── Restore persisted state from localStorage ────────────────
   setLoading(45, 'Restoring previous session...');
-  // 不再从 localStorage 恢复 alert 列表 —— 之前会残留历史 critical（如 ALERTS 显示 23
-  // 但实际是旧会话累积）。alert 列表从当前会话 WS 累积；ALERTS 数字从 DB security_events
-  // 派生（refreshAlertCount），与 chat 事件标签同源。
+  // alert timeline 从 DB security_events backfill（与 chat 事件界面同源），不依赖
+  // localStorage 残留。刷新后有历史 + WS 实时增量。
   state.deviceEvents = loadState(KEYS.hudDeviceEvents, {});
-  refreshAlertCount();
+  backfillAlertsFromDB();
   // Restore device scan/CVE/baseline data (in-memory only, no DOM yet)
   state.deviceScanData = loadState(KEYS.hudScanData, {});
   state.baselineData = loadState(KEYS.hudBaselineData, {});
