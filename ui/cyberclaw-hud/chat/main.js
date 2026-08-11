@@ -1002,8 +1002,8 @@ function renderPresetTasks(allTasks) {
           ${lastRun ? `<span>上次: ${lastRun}</span>` : ''}
         </div>
         <div class="preset-interval-edit" id="preset-edit-${def.id}" style="display:none">
-          <input type="number" value="${intervalSec}" min="60" />
-          <span style="color:var(--muted);font-size:9px;">秒</span>
+          <input type="number" value="${intervalMin}" min="1" step="1" />
+          <span style="color:var(--muted);font-size:9px;">分钟</span>
           <button class="preset-edit-btn" data-preset-save="${def.id}">保存</button>
           <button class="preset-edit-btn cancel" data-preset-cancel="${def.id}">取消</button>
         </div>
@@ -1036,7 +1036,11 @@ function renderPresetTasks(allTasks) {
       const id = btn.dataset.presetSave;
       const editRow = $(`#preset-edit-${id}`);
       const input = editRow?.querySelector('input');
-      if (input) handlePresetIntervalEdit(id, parseInt(input.value) || 300);
+      // 输入为分钟，×60 转秒传给后端（后端 interval_seconds 契约不变）
+      if (input) {
+        const minutes = parseInt(input.value) || 5;
+        handlePresetIntervalEdit(id, minutes * 60);
+      }
     });
   });
   grid.querySelectorAll('[data-preset-cancel]').forEach(btn => {

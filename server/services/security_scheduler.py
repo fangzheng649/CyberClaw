@@ -381,10 +381,12 @@ class SecurityScheduler:
         if name == "baseline_check":
             score = result.get("overall_score", 0)
             devices = result.get("devices_audited", 0)
+            online = result.get("devices_online")
             summary = result.get("summary", {})
             fail = summary.get("total_fail", 0) if isinstance(summary, dict) else 0
             crit_fail = summary.get("critical_failures", 0) if isinstance(summary, dict) else 0
-            return f"审计 {devices} 台设备，评分 {score}/100，{fail} 项不合规（{crit_fail} 项严重）"
+            online_str = f"（在线 {online} 台）" if online is not None else ""
+            return f"审计 {devices} 台设备{online_str}，评分 {score}/100，{fail} 项不合规（{crit_fail} 项严重）"
         if name == "traffic_analysis":
             iocs = result.get("iocs_found", 0)
             pkt_count = result.get("packets_analyzed", 0)
@@ -507,14 +509,19 @@ class SecurityScheduler:
         for k, v in updates.items():
             if v is not None and hasattr(task, k):
                 setattr(task, k, v)
-        # Re-spawn if schedule changed
+        # 根据 enabled/paused/schedule 变化立即调整后台循环。
+        # 旧逻辑只在 schedule_keys 变化时 respawn，有两个缺陷：
+        #   (1) 前端纯 toggle 开启任务（只改 enabled/paused）不会 spawn → 任务不运行；
+        #   (2) 禁用/暂停不 cancel 正在 sleep 的循环 → 要等 sleep 醒来才停，多跑 1 次。
         schedule_keys = {"schedule_mode", "interval_seconds", "cron_expr", "run_at"}
-        if schedule_keys & set(updates.keys()):
-            if task.id in self._async_tasks:
-                self._async_tasks[task.id].cancel()
-                self._async_tasks.pop(task.id, None)
-            if task.enabled and not task.paused:
-                self._spawn(task)
+        schedule_changed = bool(schedule_keys & set(updates.keys()))
+        should_run = task.enabled and not task.paused
+        is_running = task_id in self._async_tasks
+        if should_run and (schedule_changed or not is_running):
+            self._spawn(task)  # _spawn 内部会先 cancel 旧 task 再建新的
+        elif not should_run and is_running:
+            self._async_tasks[task_id].cancel()
+            self._async_tasks.pop(task_id, None)
         self._save_config()
         return task
 
