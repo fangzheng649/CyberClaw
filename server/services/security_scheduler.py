@@ -371,6 +371,9 @@ class SecurityScheduler:
         if not isinstance(result, dict):
             return ""
         if name == "network_scan":
+            note = (result.get("scan_stats") or {}).get("note")
+            if note:
+                return note
             hosts = result.get("hosts_up", 0)
             return f"扫描完成，发现 {hosts} 台设备在线"
         if name == "cve_check":

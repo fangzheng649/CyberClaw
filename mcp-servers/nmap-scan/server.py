@@ -650,8 +650,18 @@ async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
         devices = _load_mock_devices()
         hosts = [HostResult(ip=d["ip"], mac=d["mac"], state="up", vendor=d.get("vendor")) for d in devices]
         return ScanResult(command=f"[mock] nmap -sn {target}", hosts=hosts, scan_stats={"hosts_up": str(len(devices)), "mode": "mock"})
-    # Real mode: ARP 表发现（复用 scan_service._arp_table_scan：Windows arp -a + ping-sweep，
-    # 主动发现当前在线设备）。替代旧的 real-db（被动读 scan_service 写入的 DB，未手动扫描时 hosts=0）。
+    # Real mode: 后台触发 scan_service.trigger_scan —— 与 HUD 的 S 键完全一致：
+    # ARP + 端口指纹 + 入库(Devices 表) + 广播 device_discovered → HUD 设备列表刷新。
+    # 异步触发不等待(端口指纹耗时)，扫描完成后设备经 device_discovered 自动推送全局。
+    try:
+        from server.services.scan_service import get_scan_service
+        get_scan_service().trigger_scan_background()  # 后台触发，与 S 键入库一致
+        return ScanResult(command=f"[real-scan] nmap -sn {target} (background)", hosts=[],
+                          scan_stats={"hosts_up": "0", "mode": "real-scan", "source": "scan_service",
+                                      "note": "扫描已后台触发(同 S 键)，设备经 device_discovered 推送"})
+    except Exception as e:
+        logger.warning(f"trigger_scan failed, fallback to ARP table: {e}")
+    # fallback: 直接 ARP 表发现(不入库, 仅本任务可见)
     try:
         from server.services.scan_service import _arp_table_scan
         loop = asyncio.get_event_loop()

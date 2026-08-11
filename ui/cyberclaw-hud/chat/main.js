@@ -916,10 +916,10 @@ const PRESET_TASKS = [
     color: '#ff2244', desc: '检查已知 CVE 漏洞，关注高危设备', defaultInterval: 3600 },
   { id: 'baseline_check', name: '安全基线检查', icon: 'fa-solid fa-list-check',
     color: 'var(--accent)', desc: '审计设备安全配置与合规基线', defaultInterval: 1800 },
-  { id: 'traffic_analysis', name: '流量分析', icon: 'fa-solid fa-chart-line',
-    color: '#ffaa00', desc: '分析网络流量，提取 IoC 与异常指标', defaultInterval: 600 },
   { id: 'config_audit', name: '配置审计', icon: 'fa-solid fa-gear',
     color: '#f97316', desc: '审计设备配置变更与安全隐患', defaultInterval: 3600 },
+  { id: 'weak_password_check', name: '弱口令检测', icon: 'fa-solid fa-key',
+    color: '#e055c0', desc: '限量验证设备默认口令(Telnet/SSH)，默认关闭', defaultInterval: 604800 },
 ];
 
 let _taskCountdownInterval = null;

@@ -236,6 +236,7 @@ class ScanService:
         self._running = False
         self._task = None
         self._subnet = ""           # configured scan subnet (set on start)
+        self._background_tasks: set = set()  # 持有后台扫描 task 引用，防 GC 中断
         self._interval = 300        # retained for status/logging; NOT used for looping in manual mode
         self._scan_lock = asyncio.Lock()  # serialize startup scan vs manual triggers vs re-presses
         self._stats = {"cycles": 0, "devices_found": 0, "last_scan": ""}
@@ -310,6 +311,15 @@ class ScanService:
         result = await self._run_one_cycle(reason="manual")
         return {"status": "ok", "found": result.get("found", 0),
                 "devices": result.get("devices", [])}
+
+    def trigger_scan_background(self):
+        """后台触发扫描(与 trigger_scan 入库广播效果一致)，不阻塞调用方。
+
+        供 network_scan 周期任务用 —— 和 HUD 的 S 键写入完全相同的位置(Devices 表
+        + device_discovered 广播)，仅是不等待结果、立即返回。持有 task 引用防 GC。"""
+        task = asyncio.create_task(self.trigger_scan())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def scan_subnet(self, subnet: str) -> dict:
         """执行一次 ARP + ICMP 扫描"""
