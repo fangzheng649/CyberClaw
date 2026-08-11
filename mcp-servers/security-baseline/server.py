@@ -305,7 +305,7 @@ async def _scan_device(ip: str, ports: dict[int, tuple | None]) -> dict:
         "failed_rules": [r[0] for r in failed_rules],
         "critical_fail": critical_fail,
         "unchecked": unchecked,
-        "reachable": len(open_ports) > 0 or total > 0,
+        "reachable": len(open_ports) > 0,
     }
 
 
@@ -350,21 +350,25 @@ async def check_baseline(target: str = "", profile: str = "iot-default", detaile
 
     devices = []
     total_pass, total_fail, total_critical = 0, 0, 0
+    online_count = 0  # 仅在线设备计入合规分（离线=探测不到端口 ≠ 合规）
 
     for (ip, device_name), scan_result in zip(ip_items, scan_results):
-        total_pass += scan_result["pass"]
-        total_fail += scan_result["fail"]
-        total_critical += len(scan_result["critical_fail"])
+        reachable = scan_result["reachable"]
+        if reachable:
+            total_pass += scan_result["pass"]
+            total_fail += scan_result["fail"]
+            total_critical += len(scan_result["critical_fail"])
+            online_count += 1
 
         entry = {
             "ip": ip,
             "device": device_name,
-            "score": scan_result["score"],
+            "score": scan_result["score"] if reachable else None,
             "pass": scan_result["pass"],
             "fail": scan_result["fail"],
             "critical_failures": len(scan_result["critical_fail"]),
             "open_ports": scan_result["open_ports"],
-            "reachable": scan_result["reachable"],
+            "reachable": reachable,
         }
         if detailed:
             rules = RULES.get(profile, [])
@@ -374,11 +378,12 @@ async def check_baseline(target: str = "", profile: str = "iot-default", detaile
 
         devices.append(entry)
 
-    overall_score = round(total_pass / max(total_pass + total_fail, 1) * 100) if devices else 0
+    overall_score = round(total_pass / max(total_pass + total_fail, 1) * 100) if online_count else 0
     return json.dumps({
         "profile": profile, "profile_name": PROFILES[profile]["name"],
         "mode": "real_port_scan",
         "devices_audited": len(devices),
+        "devices_online": online_count,
         "overall_score": overall_score,
         "summary": {"total_pass": total_pass, "total_fail": total_fail, "critical_failures": total_critical},
         "devices": devices,
