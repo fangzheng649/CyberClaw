@@ -658,7 +658,7 @@ async def _exec_discover(target: str, timing: str, timeout: int) -> ScanResult:
         get_scan_service().trigger_scan_background()  # 后台触发，与 S 键入库一致
         return ScanResult(command=f"[real-scan] nmap -sn {target} (background)", hosts=[],
                           scan_stats={"hosts_up": "0", "mode": "real-scan", "source": "scan_service",
-                                      "note": "扫描已后台触发(同 S 键)，设备经 device_discovered 推送"})
+                                      "note": "网络扫描已执行，发现的设备已入库并实时推送"})
     except Exception as e:
         logger.warning(f"trigger_scan failed, fallback to ARP table: {e}")
     # fallback: 直接 ARP 表发现(不入库, 仅本任务可见)
@@ -938,7 +938,17 @@ async def default_credential_check(target: str = "topology", services: str = "te
     """
     logger.info(f"default_credential_check: target={target} services={services}")
     if target == "topology" or not target:
-        ips = [d["ip"] for d in _load_mock_devices() if d.get("ip")]
+        if _is_mock_mode():
+            ips = [d["ip"] for d in _load_mock_devices() if d.get("ip")]
+        else:
+            # real: scan_service 发现的在线设备(DB devPresentLastScan=1)
+            try:
+                from server.services.nx_bridge import get_bridge
+                all_devs = await get_bridge().get_all_devices()
+                ips = [d.get("devLastIP") for d in all_devs
+                       if d.get("devPresentLastScan") and d.get("devLastIP")]
+            except Exception:
+                ips = []
     else:
         ips = [target]
 
@@ -967,8 +977,7 @@ async def default_credential_check(target: str = "topology", services: str = "te
                     dev["weak"] = True
                     break
             dev["services_checked"].append("ssh")
-        if dev["services_checked"]:
-            results.append(dev)
+        results.append(dev)  # 所有检测设备计入(含 22/23 未开放的)，不只弱口令命中的
 
     weak_count = sum(1 for r in results if r["weak"])
     return json.dumps({
