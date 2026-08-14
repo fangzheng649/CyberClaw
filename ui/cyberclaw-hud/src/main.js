@@ -87,11 +87,6 @@ const dom = {
   valAlerts: document.getElementById('val-alerts'),
   valIsolated: document.getElementById('val-isolated'),
   valScenario: document.getElementById('val-scenario'),
-  btnStart: document.getElementById('btn-start-demo'),
-  btnStop: document.getElementById('btn-stop-demo'),
-  btnReset: document.getElementById('btn-reset'),
-  progressBar: document.getElementById('demo-progress-bar'),
-  progressText: document.getElementById('demo-progress-text'),
 };
 
 // ── Shared Geometries (optimized poly count) ────────────────────
@@ -136,7 +131,7 @@ function initScene() {
   const root = document.getElementById('scene-root');
 
   state.scene = new THREE.Scene();
-  state.scene.fog = new THREE.FogExp2(0x030508, 0.008);
+  state.scene.fog = new THREE.FogExp2(0x020407, 0.008);
 
   state.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 300);
   state.camera.position.set(2, 24, 42);
@@ -233,17 +228,17 @@ function addEnvironment() {
     state.scene.add(ring);
   }
 
-  // Starfield
-  const STAR_N = 600;
+  // Starfield — 大量小星 + 少量大星营造层次
+  const STAR_N = 1600;
   const sPos = new Float32Array(STAR_N * 3);
   const sPh = new Float32Array(STAR_N);
   const sSz = new Float32Array(STAR_N);
   for (let i = 0; i < STAR_N; i++) {
-    sPos[i*3]   = (Math.random()-0.5)*260;
-    sPos[i*3+1] = (Math.random()-0.15)*160;
-    sPos[i*3+2] = (Math.random()-0.5)*260;
+    sPos[i*3]   = (Math.random()-0.5)*300;
+    sPos[i*3+1] = (Math.random()-0.15)*190;
+    sPos[i*3+2] = (Math.random()-0.5)*300;
     sPh[i] = Math.random()*6.28;
-    sSz[i] = 0.6 + Math.random()*1.8;
+    sSz[i] = Math.random() < 0.08 ? 2.2 + Math.random()*1.6 : 0.5 + Math.random()*1.4;
   }
   const sGeo = new THREE.BufferGeometry();
   sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
@@ -256,7 +251,7 @@ function addEnvironment() {
       uniform float uTime;
       varying float vAlpha;
       void main() {
-        vAlpha = 0.3 + 0.4*sin(uTime*0.9 + aPhase);
+        vAlpha = 0.35 + 0.45*sin(uTime*0.9 + aPhase);
         vec4 mv = modelViewMatrix * vec4(position,1.0);
         gl_PointSize = aSize * (60.0 / -mv.z);
         gl_Position = projectionMatrix * mv;
@@ -740,8 +735,6 @@ async function backfillAlertsFromDB() {
 
 function updateScenarioProgress(step, total) {
   const pct = total > 0 ? (step / total) * 100 : 0;
-  dom.progressBar.style.width = `${pct}%`;
-  dom.progressText.textContent = state.scenarioRunning ? `Step ${step}/${total}` : 'Ready';
   dom.valScenario.textContent = state.scenarioRunning ? `${pct.toFixed(0)}%` : 'READY';
 }
 
@@ -1064,8 +1057,6 @@ function handleWSMessage(msg) {
       state.alerts = [];
       state.deviceEvents = {};
       dom.alertList.innerHTML = '';
-      dom.btnStart.disabled = true;
-      dom.btnStop.disabled = false;
       buildTopology(msg);
       if (msg.devices) {
         updateMetrics(_countDeviceStatuses(msg.devices));
@@ -1074,8 +1065,6 @@ function handleWSMessage(msg) {
 
     case 'scenario_complete':
       state.scenarioRunning = false;
-      dom.btnStart.disabled = false;
-      dom.btnStop.disabled = true;
       updateScenarioProgress(state.totalSteps, state.totalSteps);
       break;
 
@@ -1084,8 +1073,6 @@ function handleWSMessage(msg) {
       state.alerts = [];
       state.deviceEvents = {};
       dom.alertList.innerHTML = '';
-      dom.btnStart.disabled = false;
-      dom.btnStop.disabled = true;
       buildTopology(msg);
       if (msg.devices) {
         updateMetrics(_countDeviceStatuses(msg.devices));
@@ -1099,8 +1086,6 @@ function handleWSMessage(msg) {
       state.alerts = [];
       state.deviceEvents = {};
       dom.alertList.innerHTML = '';
-      dom.btnStart.disabled = false;
-      dom.btnStop.disabled = true;
       buildTopology(msg);
       if (msg.devices) {
         updateMetrics(_countDeviceStatuses(msg.devices));
@@ -1484,17 +1469,6 @@ function setupInteraction() {
   document.getElementById('quality-toggle').addEventListener('click', () => {
     const idx = QUALITY_MODES.indexOf(state.qualityMode);
     setQualityMode(QUALITY_MODES[(idx + 1) % QUALITY_MODES.length]);
-  });
-
-  // Demo controls
-  dom.btnStart.addEventListener('click', () => {
-    if (state.socket) state.socket.send(JSON.stringify({ action: 'start_scenario' }));
-  });
-  dom.btnStop.addEventListener('click', () => {
-    if (state.socket) state.socket.send(JSON.stringify({ action: 'stop_scenario' }));
-  });
-  dom.btnReset.addEventListener('click', () => {
-    if (state.socket) state.socket.send(JSON.stringify({ action: 'reset' }));
   });
 
   // Alert filters

@@ -34,10 +34,10 @@ html, body, #app { width: 100%; height: 100%; }
 body {
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 20% 50%, rgba(0, 255, 136, 0.04), transparent 50%),
-    radial-gradient(ellipse at 80% 20%, rgba(0, 187, 255, 0.03), transparent 40%),
-    radial-gradient(ellipse at 50% 90%, rgba(255, 34, 68, 0.02), transparent 40%),
-    linear-gradient(180deg, #060a10 0%, #030508 100%);
+    radial-gradient(ellipse at 20% 50%, rgba(0, 255, 136, 0.025), transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(0, 187, 255, 0.02), transparent 40%),
+    radial-gradient(ellipse at 50% 90%, rgba(255, 34, 68, 0.012), transparent 40%),
+    linear-gradient(180deg, #04070c 0%, #010306 100%);
   color: var(--text);
   font-family: var(--body);
 }
@@ -528,131 +528,6 @@ button, input { font: inherit; }
 .footer-row.muted span { color: var(--muted); }
 
 /* ── Demo Controls ─────────────────────────────────────────────── */
-.demo-control {
-  bottom: 70px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 14px;
-  z-index: 15;
-}
-
-.demo-btn {
-  padding: 7px 14px;
-  border-radius: 8px;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid;
-  position: relative;
-  overflow: hidden;
-}
-
-.demo-btn:active:not(:disabled) {
-  transform: scale(0.96);
-  transition: transform 0.08s;
-}
-
-.demo-btn.start {
-  background: rgba(0, 255, 136, 0.1);
-  border-color: rgba(0, 255, 136, 0.3);
-  color: var(--secure);
-}
-
-.demo-btn.start:hover {
-  background: rgba(0, 255, 136, 0.2);
-  border-color: var(--secure);
-  box-shadow: 0 0 16px rgba(0, 255, 136, 0.2);
-}
-
-.demo-btn.start:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.demo-btn.stop {
-  background: rgba(255, 34, 68, 0.1);
-  border-color: rgba(255, 34, 68, 0.3);
-  color: var(--attacked);
-}
-
-.demo-btn.stop:hover:not(:disabled) {
-  background: rgba(255, 34, 68, 0.2);
-  border-color: var(--attacked);
-}
-
-.demo-btn.stop:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.demo-btn.reset {
-  background: rgba(0, 187, 255, 0.1);
-  border-color: rgba(0, 187, 255, 0.3);
-  color: var(--scanning);
-}
-
-.demo-btn.reset:hover {
-  background: rgba(0, 187, 255, 0.2);
-  border-color: var(--scanning);
-}
-
-.demo-progress {
-  flex: 1;
-  min-width: 120px;
-  position: relative;
-  height: 20px;
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.demo-progress-bar {
-  height: 100%;
-  width: 0;
-  background: linear-gradient(90deg, var(--secure), var(--scanning), var(--vulnerable), var(--attacked));
-  border-radius: 10px;
-  transition: width 0.5s ease;
-  position: relative;
-}
-
-/* Animated shimmer sweep */
-.demo-progress-bar::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -40%;
-  width: 40%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
-  animation: shimmer 2s ease-in-out infinite;
-}
-
-@keyframes shimmer {
-  0% { left: -40%; }
-  100% { left: 100%; }
-}
-
-.demo-progress-text {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: 0.06em;
-}
-
 /* ── Collapsible Panels ────────────────────────────────────────── */
 .panel-toggle {
   position: absolute;
@@ -884,7 +759,6 @@ button, input { font: inherit; }
 
 @media (max-width: 900px) {
   .sidebar { width: calc(50vw - 22px); top: auto; bottom: 96px; height: 260px; }
-  .demo-control { bottom: 66px; }
 }
 
 @media (max-width: 720px) {
