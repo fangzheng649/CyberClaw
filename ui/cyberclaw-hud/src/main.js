@@ -154,13 +154,13 @@ function initScene() {
   const sz = new THREE.Vector2(window.innerWidth, window.innerHeight);
   state.composer = new EffectComposer(state.renderer);
   state.composer.addPass(new RenderPass(state.scene, state.camera));
-  state.bloomPass = new UnrealBloomPass(sz, 0.65, 0.4, 0.6);
+  state.bloomPass = new UnrealBloomPass(sz, 0.72, 0.4, 0.6);
   state.composer.addPass(state.bloomPass);
-  // 暗角：darkness 必须 ≤1 —— >1 时边缘色变负值, 经 ACES 色调映射反转成灰白(四周白边的根因)。
-  // 黑色占比靠加大 offset(暗角范围向中心扩), 边缘推向纯黑。
+  // 暗角：柔和聚焦。darkness 必须 ≤1（>1 时边缘色为负, 经 ACES 反转成灰白 → 白边）。
+  // 轻压四角让视线聚中心，不做大片死黑。
   state.vignettePass = new ShaderPass(VignetteShader);
-  state.vignettePass.uniforms.offset.value = 1.15;
-  state.vignettePass.uniforms.darkness.value = 0.95;
+  state.vignettePass.uniforms.offset.value = 1.02;
+  state.vignettePass.uniforms.darkness.value = 0.5;
   state.composer.addPass(state.vignettePass);
   state.glitchPass = new GlitchPass();
   state.glitchPass.enabled = false;
@@ -230,47 +230,50 @@ function addEnvironment() {
     state.scene.add(ring);
   }
 
-  // Starfield — 大量小星 + 少量大星营造层次
-  const STAR_N = 1600;
-  const sPos = new Float32Array(STAR_N * 3);
-  const sPh = new Float32Array(STAR_N);
-  const sSz = new Float32Array(STAR_N);
-  for (let i = 0; i < STAR_N; i++) {
-    sPos[i*3]   = (Math.random()-0.5)*300;
-    sPos[i*3+1] = (Math.random()-0.15)*190;
-    sPos[i*3+2] = (Math.random()-0.5)*300;
-    sPh[i] = Math.random()*6.28;
-    sSz[i] = Math.random() < 0.22 ? 2.4 + Math.random()*1.8 : 0.5 + Math.random()*1.4;
-  }
-  const sGeo = new THREE.BufferGeometry();
-  sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
-  sGeo.setAttribute('aPhase', new THREE.BufferAttribute(sPh, 1));
-  sGeo.setAttribute('aSize', new THREE.BufferAttribute(sSz, 1));
-  const sMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 } },
-    vertexShader: `
+  // Starfield — 双层视差：外层暗淡星海铺底 + 内层亮星闪烁（共享 uTime 驱动）
+  const starVert = `
       attribute float aPhase, aSize;
-      uniform float uTime;
+      uniform float uTime, uAlphaBase, uAlphaRange;
       varying float vAlpha;
       void main() {
-        vAlpha = 0.35 + 0.45*sin(uTime*0.9 + aPhase);
+        vAlpha = uAlphaBase + uAlphaRange*sin(uTime*0.9 + aPhase);
         vec4 mv = modelViewMatrix * vec4(position,1.0);
         gl_PointSize = aSize * (60.0 / -mv.z);
         gl_Position = projectionMatrix * mv;
-      }`,
-    fragmentShader: `
+      }`;
+  const starFrag = `
       varying float vAlpha;
       void main() {
         float d = length(gl_PointCoord-0.5)*2.0;
         if(d>1.0) discard;
         gl_FragColor = vec4(0.4,0.9,0.7, vAlpha*smoothstep(1.0,0.3,d));
-      }`,
-    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
-  });
-  const stars = new THREE.Points(sGeo, sMat);
-  stars.matrixAutoUpdate = false; stars.updateMatrix();
-  state.scene.add(stars);
-  state.envUniforms = { starTime: sMat.uniforms.uTime, ringTime: ringUniforms.uTime };
+      }`;
+  const starUniforms = { uTime: { value: 0 } };
+  const makeStars = (count, spread, sMin, sMax, aBase, aRange) => {
+    const pos = new Float32Array(count*3), ph = new Float32Array(count), sz = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      pos[i*3]   = (Math.random()-0.5)*spread;
+      pos[i*3+1] = (Math.random()-0.15)*spread*0.62;
+      pos[i*3+2] = (Math.random()-0.5)*spread;
+      ph[i] = Math.random()*6.28;
+      sz[i] = sMin + Math.random()*(sMax-sMin);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
+    g.setAttribute('aSize', new THREE.BufferAttribute(sz, 1));
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uTime: starUniforms.uTime, uAlphaBase: { value: aBase }, uAlphaRange: { value: aRange } },
+      vertexShader: starVert, fragmentShader: starFrag,
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const p = new THREE.Points(g, m);
+    p.matrixAutoUpdate = false; p.updateMatrix();
+    state.scene.add(p);
+  };
+  makeStars(1300, 300, 0.3, 1.0, 0.14, 0.22);  // 星海：暗淡铺底
+  makeStars(320, 200, 1.2, 3.4, 0.38, 0.50);   // 亮星：大而闪烁
+  state.envUniforms = { starTime: starUniforms.uTime, ringTime: ringUniforms.uTime };
 }
 
 // ═══════════════════════════════════════════════════════════════════
