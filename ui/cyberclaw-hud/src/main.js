@@ -154,11 +154,13 @@ function initScene() {
   const sz = new THREE.Vector2(window.innerWidth, window.innerHeight);
   state.composer = new EffectComposer(state.renderer);
   state.composer.addPass(new RenderPass(state.scene, state.camera));
-  state.bloomPass = new UnrealBloomPass(sz, 0.55, 0.4, 0.6);
+  state.bloomPass = new UnrealBloomPass(sz, 0.65, 0.4, 0.6);
   state.composer.addPass(state.bloomPass);
+  // 暗角：darkness 必须 ≤1 —— >1 时边缘色变负值, 经 ACES 色调映射反转成灰白(四周白边的根因)。
+  // 黑色占比靠加大 offset(暗角范围向中心扩), 边缘推向纯黑。
   state.vignettePass = new ShaderPass(VignetteShader);
-  state.vignettePass.uniforms.offset.value = 0.86;
-  state.vignettePass.uniforms.darkness.value = 1.7;
+  state.vignettePass.uniforms.offset.value = 1.15;
+  state.vignettePass.uniforms.darkness.value = 0.95;
   state.composer.addPass(state.vignettePass);
   state.glitchPass = new GlitchPass();
   state.glitchPass.enabled = false;
