@@ -131,7 +131,7 @@ function initScene() {
   const root = document.getElementById('scene-root');
 
   state.scene = new THREE.Scene();
-  state.scene.fog = new THREE.FogExp2(0x020407, 0.008);
+  state.scene.fog = new THREE.FogExp2(0x030508, 0.008);
 
   state.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 300);
   state.camera.position.set(2, 24, 42);
@@ -154,11 +154,11 @@ function initScene() {
   const sz = new THREE.Vector2(window.innerWidth, window.innerHeight);
   state.composer = new EffectComposer(state.renderer);
   state.composer.addPass(new RenderPass(state.scene, state.camera));
-  state.bloomPass = new UnrealBloomPass(sz, 0.7, 0.4, 0.6);
+  state.bloomPass = new UnrealBloomPass(sz, 0.55, 0.4, 0.6);
   state.composer.addPass(state.bloomPass);
   state.vignettePass = new ShaderPass(VignetteShader);
-  state.vignettePass.uniforms.offset.value = 0.92;
-  state.vignettePass.uniforms.darkness.value = 1.4;
+  state.vignettePass.uniforms.offset.value = 0.86;
+  state.vignettePass.uniforms.darkness.value = 1.7;
   state.composer.addPass(state.vignettePass);
   state.glitchPass = new GlitchPass();
   state.glitchPass.enabled = false;
@@ -238,7 +238,7 @@ function addEnvironment() {
     sPos[i*3+1] = (Math.random()-0.15)*190;
     sPos[i*3+2] = (Math.random()-0.5)*300;
     sPh[i] = Math.random()*6.28;
-    sSz[i] = Math.random() < 0.08 ? 2.2 + Math.random()*1.6 : 0.5 + Math.random()*1.4;
+    sSz[i] = Math.random() < 0.22 ? 2.4 + Math.random()*1.8 : 0.5 + Math.random()*1.4;
   }
   const sGeo = new THREE.BufferGeometry();
   sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
