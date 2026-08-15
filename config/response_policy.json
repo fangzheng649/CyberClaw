@@ -1,0 +1,4 @@
+{
+  "mode": "auto",
+  "_comment": "incident_agent 研判为'严重'后的响应策略: auto=自动隔离(tap断开) / confirm=提示人工确认 / off=只研判不动作"
+}

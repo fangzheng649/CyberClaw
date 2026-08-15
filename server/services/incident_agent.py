@@ -125,6 +125,37 @@ async def handle_alert_incident(eve_alert: dict):
         except Exception as e:
             logger.debug(f"incident notify failed: {e}")
 
+        # ── 5. 响应执行（按策略：auto 自动隔离 / confirm 提示人工 / off 不动作）──
+        if risk_label == "严重":
+            try:
+                mode = "confirm"
+                policy_path = __import__("pathlib").Path(
+                    __file__).resolve().parent.parent.parent / "config" / "response_policy.json"
+                mode = __import__("json").loads(
+                    policy_path.read_text(encoding="utf-8")).get("mode", "confirm")
+                if mode == "auto":
+                    from .mcp_tool_service import call_tool
+                    r = await call_tool("auto-response", "isolate_device",
+                                        device_ip=dst_ip, reason=f"incident: {signature}")
+                    iso_ok = isinstance(r, dict) and r.get("status") in ("isolated", "already_isolated")
+                    from .nx_bridge import get_bridge
+                    await get_bridge().record_security_event(
+                        source_type="auto_response",
+                        severity="warning" if iso_ok else "info",
+                        message=(f"自动响应 · {target_name} 已隔离（tap 断开，研判置信度 {confidence:.2f}）"
+                                 if iso_ok else f"自动隔离 {target_name} 未成功: {str(r)[:80]}"),
+                        target=dst_ip, source="incident_agent")
+                    logger.info(f"[incident_agent] 自动隔离 {dst_ip}: {r.get('status') if isinstance(r, dict) else r}")
+                elif mode == "confirm":
+                    from .notification_bridge import get_notification_bridge
+                    await get_notification_bridge()._send(
+                        title=f"响应建议 · 建议隔离 {target_name}",
+                        message=f"研判为严重攻击。确认隔离请在 chat 输入「隔离 {dst_ip}」或调用 /api/tools/isolate",
+                        severity="warning", section="security_events", task_type="incident_agent",
+                        bypass_dedup=True)
+            except Exception as e:
+                logger.warning(f"[incident_agent] 响应执行失败: {e}")
+
         logger.info(f"[incident_agent] 研判完成: {target_name} {risk_label} "
                     f"(置信度 {confidence:.2f})")
     except Exception as e:

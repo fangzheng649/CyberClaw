@@ -108,6 +108,15 @@ class IsolationService:
             "timestamp": datetime.now().isoformat(),
         }
 
+        # VM 实验场设备优先走 tap 断开（等效物理拔网线），不进交换机/iptables 方法
+        try:
+            from .vm_isolator import vm_device_tap, vm_isolate
+            if vm_device_tap(device_ip) is not None:
+                result.update(await vm_isolate(device_ip))
+                return result
+        except Exception as e:
+            logger.warning(f"vm_tap isolate failed, fallthrough: {e}")
+
         if method == "iptables":
             r = await self._isolate_iptables(device_ip)
             result.update(r)
@@ -147,6 +156,15 @@ class IsolationService:
             "method": method,
             "timestamp": datetime.now().isoformat(),
         }
+
+        # VM 实验场设备优先走 tap 恢复
+        try:
+            from .vm_isolator import vm_device_tap, vm_restore
+            if vm_device_tap(device_ip) is not None:
+                result.update(await vm_restore(device_ip))
+                return result
+        except Exception as e:
+            logger.warning(f"vm_tap restore failed, fallthrough: {e}")
 
         if method == "iptables":
             r = await self._restore_iptables(device_ip)
