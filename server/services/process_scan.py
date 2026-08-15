@@ -99,7 +99,7 @@ def _sync_create_new_devices() -> list[dict]:
         # Find scan rows whose MAC is not in Devices
         rows = conn.execute("""
             SELECT cs.scanMac, cs.scanLastIP, cs.scanVendor,
-                   cs.scanSourcePlugin, cs.scanName, cs.scanType
+                   cs.scanSourcePlugin, cs.scanName, cs.scanType, cs.scanParentMAC
             FROM CurrentScan cs
             WHERE NOT EXISTS (
                 SELECT 1 FROM Devices d WHERE d.devMac = cs.scanMac
@@ -113,6 +113,7 @@ def _sync_create_new_devices() -> list[dict]:
             source_plugin = row["scanSourcePlugin"] or "SCAN"
             name = row["scanName"] or ""
             scan_type = row["scanType"] or ""
+            parent_mac = (row["scanParentMAC"] or "").strip()
 
             # Infer device type/icon via heuristics
             dev_type = scan_type or "unknown"
@@ -133,12 +134,12 @@ def _sync_create_new_devices() -> list[dict]:
             conn.execute(
                 """INSERT OR IGNORE INTO Devices
                    (devMac, devName, devVendor, devLastIP, devType, devIcon,
-                    devStatus, devDiscoveryMethod, devSourcePlugin,
+                    devStatus, devDiscoveryMethod, devSourcePlugin, devParentMAC,
                     devPresentLastScan, devIsNew, devIsArchived, devAlertDown,
                     devFirstConnection, devLastConnection)
-                   VALUES (?, ?, ?, ?, ?, ?, 'secure', ?, ?, 1, 1, 0, 1, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, 'secure', ?, ?, ?, 1, 1, 0, 1, ?, ?)""",
                 (mac, name or "(unknown)", vendor, ip, dev_type, dev_icon,
-                 source_plugin, source_plugin, now, now),
+                 source_plugin, source_plugin, parent_mac, now, now),
             )
 
             # Insert "New Device" event

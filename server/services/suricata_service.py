@@ -87,6 +87,7 @@ class SuricataMonitor:
             "by_protocol": {},
         }
         self._scapy_task: Optional[asyncio.Task] = None
+        self._ssh_task: Optional[asyncio.Task] = None
         self._scapy_stats = {
             "packet_count": 0,
             "by_protocol": {},
@@ -101,6 +102,17 @@ class SuricataMonitor:
     async def start(self) -> dict:
         if self._running:
             return {"status": "already_running", "mode": self._mode}
+
+        # VM 实验场模式：SSH 到 Ubuntu VM tail Suricata eve.json，实时回传告警。
+        # 检测引擎(Suricata)跑在 VM 内监听 br0（真实内网流量），Windows 侧只收告警流。
+        ssh_host = os.getenv("SURICATA_SSH_HOST", "")
+        ssh_pass = os.getenv("SURICATA_SSH_PASS", "")
+        if ssh_host and ssh_pass:
+            self._running = True
+            self._mode = "ssh_tail"
+            self._ssh_task = asyncio.create_task(self._ssh_tail_loop())
+            logger.info(f"Suricata SSH-tail bridge started → {ssh_host} (br0 IDS 告警实时回传)")
+            return {"status": "started", "mode": "ssh_tail", "host": ssh_host}
 
         if self.eve_json_path.exists():
             self._running = True
@@ -127,7 +139,7 @@ class SuricataMonitor:
 
     async def stop(self) -> dict:
         self._running = False
-        for t in (self._task, self._scapy_task):
+        for t in (self._task, self._scapy_task, getattr(self, "_ssh_task", None)):
             if t and not t.done():
                 t.cancel()
                 try:
@@ -136,9 +148,66 @@ class SuricataMonitor:
                     pass
         self._task = None
         self._scapy_task = None
+        self._ssh_task = None
         self._mode = "idle"
         logger.info("Suricata monitor stopped")
         return {"status": "stopped"}
+
+    # ── SSH tail 模式：VM 内 eve.json → 本进程告警处理链 ──────────────
+    def _handle_eve_line(self, line: str):
+        """单行 eve.json → alert 事件复用现有处理（security_events/FSM/HUD 广播）。"""
+        line = line.strip()
+        if not line:
+            return
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if evt.get("event_type") == "alert":
+            self._process_alert(evt)
+
+    async def _ssh_tail_loop(self):
+        """保持 SSH 长连接 tail -F VM 内 eve.json；断线自动重连(5s)。"""
+        host = os.getenv("SURICATA_SSH_HOST", "")
+        port = int(os.getenv("SURICATA_SSH_PORT", "22"))
+        user = os.getenv("SURICATA_SSH_USER", "fz")
+        password = os.getenv("SURICATA_SSH_PASS", "")
+        eve_path = os.getenv("SURICATA_SSH_EVE", "/var/log/suricata/eve.json")
+        loop = asyncio.get_event_loop()
+        while self._running:
+            client = None
+            try:
+                import paramiko
+                client = paramiko.SSHClient()
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                await loop.run_in_executor(
+                    None,
+                    lambda: client.connect(host, port=port, username=user, password=password,
+                                           timeout=8, allow_agent=False, look_for_keys=False))
+                chan = client.get_transport().open_session()
+                chan.exec_command(f"tail -n 0 -F {eve_path} 2>/dev/null")
+                buf = b""
+                while self._running:
+                    data = await loop.run_in_executor(None, chan.recv, 4096)
+                    if not data:
+                        break  # 连接被断开 → 外层重连
+                    buf += data
+                    while b"\n" in buf:
+                        raw, buf = buf.split(b"\n", 1)
+                        self._handle_eve_line(raw.decode("utf-8", "replace"))
+            except asyncio.CancelledError:
+                if client:
+                    client.close()
+                return
+            except Exception as e:
+                logger.warning(f"suricata ssh tail 断开，5s 后重连: {e}")
+            finally:
+                if client:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+            await asyncio.sleep(5)
 
     async def _monitor_eve_json(self):
         while self._running:

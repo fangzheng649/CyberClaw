@@ -3,5 +3,26 @@
   "host": "192.168.24.130",
   "port_base": 8000,
   "port_max": 8030,
-  "internal_prefix": "192.168.1."
+  "internal_prefix": "192.168.1.",
+  "_comment": "devices 键=IP末段; mac/tap 为权威映射(HOST-ACCESS.md), model/firmware 供 CVE 检查; tap 供隔离用(待与文档复核)",
+  "devices": {
+    "1":  {"mac": "60:A3:E3:61:81:0F", "name": "OpenWrt-Gateway", "vendor": "OpenWrt", "model": "OpenWrt x86",      "type": "gateway", "tap": 0},
+    "2":  {"mac": "52:54:00:01:00:02", "name": "IoTGoat",          "vendor": "OWASP",   "model": "IoTGoat v3",        "type": "router",  "tap": 1},
+    "15": {"mac": "C0:56:E3:41:00:05", "name": "DCS-932L",         "vendor": "D-Link",  "model": "DCS-932L B1",       "type": "camera",  "firmware": "v2.18.01", "tap": 6},
+    "16": {"mac": "C0:56:E3:41:00:06", "name": "DCS-933L",         "vendor": "D-Link",  "model": "DCS-933L A1",       "type": "camera",  "firmware": "v1.12",    "tap": 14},
+    "17": {"mac": "00:1B:11:D1:06:15", "name": "DIR-615-E",        "vendor": "D-Link",  "model": "DIR-615 RevE",      "type": "router",  "tap": 15},
+    "18": {"mac": "C0:56:E3:41:00:12", "name": "DCS-5000L",        "vendor": "D-Link",  "model": "DCS-5000L",         "type": "camera",  "firmware": "v1.02.02", "tap": 2},
+    "19": {"mac": "C0:56:E3:41:00:13", "name": "DCS-5020L",        "vendor": "D-Link",  "model": "DCS-5020L A1",      "type": "camera",  "firmware": "v1.12.03", "tap": 3},
+    "20": {"mac": "C0:56:E3:41:00:14", "name": "DCS-5030L",        "vendor": "D-Link",  "model": "DCS-5030L A1",      "type": "camera",  "firmware": "v1.07.02", "tap": 4},
+    "21": {"mac": "C0:56:E3:41:00:15", "name": "DCS-933L-b",       "vendor": "D-Link",  "model": "DCS-933L A1",       "type": "camera",  "firmware": "v1.10.13", "tap": 5},
+    "22": {"mac": "C0:56:E3:41:00:16", "name": "DCS-935L",         "vendor": "D-Link",  "model": "DCS-935L A1",       "type": "camera",  "firmware": "v1.07.03", "tap": 7},
+    "23": {"mac": "C0:56:E3:41:00:17", "name": "DCS-960L",         "vendor": "D-Link",  "model": "DCS-960L A1",       "type": "camera",  "firmware": "v1.06.01", "tap": 8},
+    "24": {"mac": "00:1B:11:D1:03:00", "name": "DIR-300",          "vendor": "D-Link",  "model": "DIR-300 NRU B5",    "type": "router",  "firmware": "v2.5.11",  "tap": 9},
+    "25": {"mac": "00:1B:11:D1:03:0B", "name": "DIR-300-b",        "vendor": "D-Link",  "model": "DIR-300 NRU B5",    "type": "router",  "tap": 10},
+    "26": {"mac": "C0:56:E3:41:00:1A", "name": "DCS-5030L-b",      "vendor": "D-Link",  "model": "DCS-5030L A1",      "type": "camera",  "tap": 11},
+    "27": {"mac": "00:1B:11:D1:06:20", "name": "DIR-620",          "vendor": "D-Link",  "model": "DIR-620 A/E1",      "type": "router",  "firmware": "v2.5.18",  "tap": 12},
+    "28": {"mac": "00:1B:11:D1:06:1C", "name": "DIR-615-C",        "vendor": "D-Link",  "model": "DIR-615 RevC",      "type": "router",  "firmware": "v3.13",    "tap": 13},
+    "29": {"mac": "C0:56:E3:41:00:1D", "name": "DCS-5000L-b",      "vendor": "D-Link",  "model": "DCS-5000L",         "type": "camera",  "tap": 16},
+    "30": {"mac": "C0:56:E3:41:00:1E", "name": "DCS-5020L-b",      "vendor": "D-Link",  "model": "DCS-5020L A1",      "type": "camera",  "tap": 17}
+  }
 }

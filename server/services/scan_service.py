@@ -211,47 +211,77 @@ def _http_fingerprint(host: str, port: int) -> dict:
 def _vm_portmap_scan() -> list[dict]:
     """扫描 VM 实验场端口映射段：host:port_base+N → internal_prefix+N。
 
-    返回与 _arp_table_scan 同构的设备列表；MAC 按内网 IP 合成稳定本地管理位
-    (02:xx)地址，保证设备身份跨扫描周期稳定（pipeline 按 MAC 去重/判离线）。"""
+    设备身份优先取 vm_lab.json devices 注册表（真实 MAC/型号/固件，来自
+    HOST-ACCESS.md 的 tap↔MAC↔IP 权威映射）；未注册端口退回 HTTP 指纹 +
+    按 IP 合成的稳定本地管理位 MAC。pipeline 按 MAC 去重/判离线。"""
     cfg = _load_vm_lab_config()
     host = cfg.get("host", "")
     port_base = int(cfg.get("port_base", 8000))
     port_max = int(cfg.get("port_max", 8030))
     prefix = cfg.get("internal_prefix", "192.168.1.")
+    registry = cfg.get("devices") or {}
     if not cfg or not host:
         return []
 
     import socket as _socket
 
     def _probe(port: int):
+        """TCP 连接 + HTTP 探活。socat 转发对已挂设备的后端同样接受 TCP（假开放），
+        必须确认 HTTP 有响应字节才算设备真在线（实验场设备全部暴露 Web）。"""
         s = _socket.socket()
-        s.settimeout(0.8)
+        s.settimeout(2.5)
         try:
-            return port if s.connect_ex((host, port)) == 0 else None
+            if s.connect_ex((host, port)) != 0:
+                return None
+            s.sendall(f"GET / HTTP/1.0\r\nHost: {host}\r\n\r\n".encode())
+            data = s.recv(64)
+            return port if data else None
+        except Exception:
+            return None
         finally:
             s.close()
 
     with ThreadPoolExecutor(max_workers=64) as ex:
         open_ports = [p for p in ex.map(_probe, range(port_base, port_max + 1)) if p]
 
-    # HTTP 指纹并行（超时设备不拖慢整体）
-    with ThreadPoolExecutor(max_workers=12) as ex:
-        fps = list(ex.map(lambda p: _http_fingerprint(host, p), open_ports))
+    # 只对注册表未覆盖的端口做 HTTP 指纹（注册表是权威身份，指纹省时）
+    unreg = [p for p in open_ports if str(p - port_base) not in registry]
+    fp_map = {}
+    if unreg:
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            for p, fp in zip(unreg, ex.map(lambda p: _http_fingerprint(host, p), unreg)):
+                fp_map[p] = fp
 
     devices = []
-    for port, fp in zip(open_ports, fps):
+    for port in open_ports:
         n = port - port_base
         ip = f"{prefix}{n}"
-        mac = "02:00:" + ":".join(f"{int(x):02X}" for x in ip.split("."))
-        devices.append({
-            "ip": ip,
-            "mac": mac,
-            "vendor": fp["vendor"] or "VM-Device",
-            "name": fp["name"] or f"VM-Device-{n}",
-            "type": fp["type"] or "unknown",
-            "method": "vm_portmap",
-            "scanSourcePlugin": "VMPORTMAP",
-        })
+        reg = registry.get(str(n)) or {}
+        if reg:
+            devices.append({
+                "ip": ip,
+                "mac": (reg.get("mac") or "").strip() or "02:00:" + ":".join(f"{int(x):02X}" for x in ip.split(".")),
+                "vendor": reg.get("vendor") or "VM-Device",
+                "name": reg.get("name") or f"VM-Device-{n}",
+                "type": reg.get("type") or "unknown",
+                "model": reg.get("model", ""),
+                "firmware": reg.get("firmware", ""),
+                # 星型拓扑：实验场设备统一挂网关(.1)下 → HUD 连线（Priority-2 链路）
+                "parent_mac": "" if str(n) == "1" else (registry.get("1", {}).get("mac", "")),
+                "method": "vm_portmap",
+                "scanSourcePlugin": "VMPORTMAP",
+            })
+        else:
+            fp = fp_map.get(port) or {}
+            devices.append({
+                "ip": ip,
+                "mac": "02:00:" + ":".join(f"{int(x):02X}" for x in ip.split(".")),
+                "vendor": fp.get("vendor") or "VM-Device",
+                "name": fp.get("name") or f"VM-Device-{n}",
+                "type": fp.get("type") or "unknown",
+                "method": "vm_portmap",
+                "scanSourcePlugin": "VMPORTMAP",
+            })
     return devices
 
 
@@ -654,9 +684,14 @@ class ScanService:
                         target=ip, source="scan_service")
                 except Exception as e:
                     logger.debug(f"record_security_event(device_status) failed: {e}")
-                # 事件驱动：新设备上线 → 异步触发该设备 CVE 检查（命中缓存秒回，不阻塞广播）
+                # 事件驱动：新设备上线 → 异步触发该设备 CVE 检查（命中缓存秒回，不阻塞广播）。
+                # 必须持有 task 引用：asyncio 对 task 只存弱引用，无引用的 fire-and-forget
+                # 会在长 await(NVD 限速退避)中被 GC 中断 —— 之前 18 台设备全没出事件就是这个坑。
                 if msg.get("type") == "device_discovered":
-                    asyncio.create_task(_trigger_cve_check_for_device(mac))
+                    _d = msg.get("device") or {}
+                    _t = asyncio.create_task(_trigger_cve_check_for_device(mac, _d.get("ip") or ""))
+                    self._background_tasks.add(_t)
+                    _t.add_done_callback(self._background_tasks.discard)
 
 
 # 单例
@@ -674,8 +709,8 @@ def _norm_mac(m: str) -> str:
     return re.sub(r"[:\-]", "", (m or "").lower())
 
 
-async def _trigger_cve_check_for_device(mac: str):
-    """新设备上线 → 按 mac 从 topology 读 model/firmware → 查 CVE（命中缓存秒回）→ 记 security_event。
+async def _trigger_cve_check_for_device(mac: str, ip: str = ""):
+    """新设备上线 → 读设备档案(topology 或 VM 注册表)拿 model/firmware → 查 CVE（命中缓存秒回）→ 记 security_event。
 
     事件驱动的 CVE 检测：不再固定周期全量打 NVD，而是设备上线时增量查一次，
     结果由 cve-intel 按 (vendor,model,firmware) 持久缓存。"""
@@ -684,6 +719,12 @@ async def _trigger_cve_check_for_device(mac: str):
         topo = load_topology_config()
         nm = _norm_mac(mac)
         dev = next((d for d in topo.get("devices", []) if _norm_mac(d.get("mac", "")) == nm), None)
+        if not dev and ip:
+            # 场景二：VM 实验场注册表（vm_lab.json devices，按 IP 末段）—— 自带真实型号/固件
+            reg = (_load_vm_lab_config().get("devices") or {}).get(ip.rsplit(".", 1)[-1], None)
+            if reg:
+                dev = {"model": reg.get("model", ""), "firmware_version": reg.get("firmware", ""),
+                       "vendor": reg.get("vendor", ""), "ip": ip, "name": reg.get("name", "")}
         if not dev or not dev.get("model"):
             return  # topology 无此设备或无型号 → CVE 无法定位，跳过
         model = dev.get("model", "")
