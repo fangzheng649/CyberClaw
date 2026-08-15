@@ -56,12 +56,31 @@ def _layout_pos(mac: str) -> list[float]:
     return [round(radius * math.cos(angle), 3), 0.0, round(radius * math.sin(angle), 3)]
 
 
+_VM_LAB_POS_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "vm_lab.json"
+_vm_pos_cache: dict[str, list[float]] | None = None
+
+
+def _vm_pos(mac: str) -> list[float] | None:
+    """VM 实验场注册表设计的布局坐标（mac→pos）。没有则 None。"""
+    global _vm_pos_cache
+    if _vm_pos_cache is None:
+        try:
+            cfg = json.loads(_VM_LAB_POS_PATH.read_text(encoding="utf-8"))
+            _vm_pos_cache = {
+                (d.get("mac") or "").lower(): list(d["pos"])
+                for d in (cfg.get("devices") or {}).values() if d.get("pos")
+            }
+        except Exception:
+            _vm_pos_cache = {}
+    return _vm_pos_cache.get((mac or "").lower())
+
+
 def _resolved_pos(pos_raw, mac: str) -> list[float] | None:
     """Authoritative pos resolution shared by every topology path.
 
     A valid stored coordinate passes through unchanged (so the mock/config
     topology layout is never disturbed). A missing/invalid one falls back to
-    _layout_pos(mac). Returns None only when there is no MAC to hash.
+    VM-lab designed positions (if registered) or _layout_pos(mac).
     """
     if pos_raw is None:
         parsed = None
@@ -75,6 +94,9 @@ def _resolved_pos(pos_raw, mac: str) -> list[float] | None:
             parsed = None
     if _is_valid_pos(parsed):
         return [float(parsed[0]), float(parsed[1]), float(parsed[2])]
+    vm = _vm_pos(mac)
+    if vm:
+        return vm
     return _layout_pos(mac) if mac else None
 
 

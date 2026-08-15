@@ -182,6 +182,15 @@ def _load_vm_lab_config() -> dict:
         return {}
 
 
+def _vm_registry_macs() -> set[str]:
+    """VM 实验场注册表 MAC 集合（小写）。这些设备的身份由注册表权威给出，
+    enrich 阶段跳过端口探测与 topology 档案覆写（否则 OpenWrt 网关会因复用
+    旧交换机 MAC 被改回 'TL-SG2210LPF'）。"""
+    cfg = _load_vm_lab_config()
+    return {(d.get("mac") or "").strip().lower()
+            for d in (cfg.get("devices") or {}).values() if d.get("mac")}
+
+
 def _http_fingerprint(host: str, port: int) -> dict:
     """端口映射设备 HTTP 指纹：Server 头 + <title> 推断厂商/型号/类型。"""
     import urllib.request
@@ -585,7 +594,12 @@ class ScanService:
             # instant, no probe) vs a port-fingerprint probe.
             presets: list[tuple[str, dict]] = []
             probe_targets: dict[str, str] = {}
+            vm_macs = _vm_registry_macs()
             for mac, ip in candidates.items():
+                if mac in vm_macs:
+                    # VM 实验场设备：注册表身份权威（含 pos/型号/固件），不做端口探测
+                    # （内网 IP 从物理机不可达，探测必超时）也不做 topology 档案覆写。
+                    continue
                 profile = match_device_profile(mac, ip)
                 if profile:
                     presets.append((mac, profile))
