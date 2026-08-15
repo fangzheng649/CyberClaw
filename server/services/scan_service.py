@@ -165,6 +165,96 @@ def _arp_table_scan(subnet: str) -> list[dict]:
     } for ip, mac in _parse_arp_output(text, network)]
 
 
+# ── VM 实验场端口映射发现（第二演示场景）───────────────────────────────
+# Ubuntu VM 内 br0 网段(192.168.1.0/24)的虚拟 IoT 设备（D-Link 摄像头群/DIR 路由器/
+# IoTGoat 等），经 VMware NAT 出口以 host:8000+N 端口转发接入。物理机没有到
+# 192.168.1.0/24 的路由（ARP 永远扫不到），发现方式 = TCP 扫端口映射段：
+# 每个开放端口即一台在线设备，HTTP 指纹识别厂商/型号。VM 启动即发现、停机即离线。
+
+_VM_LAB_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "vm_lab.json"
+
+
+def _load_vm_lab_config() -> dict:
+    try:
+        cfg = json.loads(_VM_LAB_CONFIG_PATH.read_text(encoding="utf-8"))
+        return cfg if cfg.get("enabled") else {}
+    except Exception:
+        return {}
+
+
+def _http_fingerprint(host: str, port: int) -> dict:
+    """端口映射设备 HTTP 指纹：Server 头 + <title> 推断厂商/型号/类型。"""
+    import urllib.request
+    info = {"vendor": "", "name": "", "type": ""}
+    try:
+        resp = urllib.request.urlopen(f"http://{host}:{port}/", timeout=2.0)
+        body = resp.read(800).decode("utf-8", "replace")
+        server = (resp.headers.get("Server") or "").lower()
+        m = re.search(r"<title[^>]*>([^<]{0,120})", body, re.I)
+        title = m.group(1) if m else ""
+        tl = title.lower()
+        if "alphapd" in server or ("d-link" in tl and "camera" in tl):
+            info["vendor"], info["type"] = "D-Link", "camera"
+            mm = re.search(r"DCS[- ]?\w+", title, re.I)
+            info["name"] = mm.group(0).upper() if mm else "D-Link IP Camera"
+        elif "router" in tl or "httpd" in server:
+            info["vendor"], info["type"] = "D-Link", "router"
+            mm = re.search(r"DIR[- ]?\w+", title, re.I)
+            info["name"] = mm.group(0).upper() if mm else "D-Link Router"
+        elif server:
+            info["vendor"] = "Unknown"
+    except Exception:
+        pass
+    return info
+
+
+def _vm_portmap_scan() -> list[dict]:
+    """扫描 VM 实验场端口映射段：host:port_base+N → internal_prefix+N。
+
+    返回与 _arp_table_scan 同构的设备列表；MAC 按内网 IP 合成稳定本地管理位
+    (02:xx)地址，保证设备身份跨扫描周期稳定（pipeline 按 MAC 去重/判离线）。"""
+    cfg = _load_vm_lab_config()
+    host = cfg.get("host", "")
+    port_base = int(cfg.get("port_base", 8000))
+    port_max = int(cfg.get("port_max", 8030))
+    prefix = cfg.get("internal_prefix", "192.168.1.")
+    if not cfg or not host:
+        return []
+
+    import socket as _socket
+
+    def _probe(port: int):
+        s = _socket.socket()
+        s.settimeout(0.8)
+        try:
+            return port if s.connect_ex((host, port)) == 0 else None
+        finally:
+            s.close()
+
+    with ThreadPoolExecutor(max_workers=64) as ex:
+        open_ports = [p for p in ex.map(_probe, range(port_base, port_max + 1)) if p]
+
+    # HTTP 指纹并行（超时设备不拖慢整体）
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        fps = list(ex.map(lambda p: _http_fingerprint(host, p), open_ports))
+
+    devices = []
+    for port, fp in zip(open_ports, fps):
+        n = port - port_base
+        ip = f"{prefix}{n}"
+        mac = "02:00:" + ":".join(f"{int(x):02X}" for x in ip.split("."))
+        devices.append({
+            "ip": ip,
+            "mac": mac,
+            "vendor": fp["vendor"] or "VM-Device",
+            "name": fp["name"] or f"VM-Device-{n}",
+            "type": fp["type"] or "unknown",
+            "method": "vm_portmap",
+            "scanSourcePlugin": "VMPORTMAP",
+        })
+    return devices
+
+
 # ---------------------------------------------------------------------------
 # Scan event → HUD WS message mapping
 # ---------------------------------------------------------------------------
@@ -371,6 +461,13 @@ class ScanService:
         # nmap 兜底会去扫一个无响应网段 ~120s 才超时 → trigger_scan 挂起，用户按 S 后迟迟
         # 看不到"发现 N 台"。arp_table（ping-sweep + arp -a）覆盖 Windows、arp-scan 覆盖
         # Linux；空结果即"确实没设备"，交给 _process_results 据此把真实设备标记离线。
+
+        # VM 实验场（第二场景）：NAT 出口端口映射段 —— VM 内虚拟设备在物理机侧无 ARP，
+        # 每个开放端口映射为一台在线设备。与 ARP 结果按 IP 去重后合并。
+        vm_devices = _vm_portmap_scan()
+        if vm_devices:
+            seen = {r.get("ip") for r in results}
+            results = results + [d for d in vm_devices if d["ip"] not in seen]
         return results
 
     async def _process_results(self, results: list[dict]):
