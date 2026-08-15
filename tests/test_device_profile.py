@@ -62,10 +62,12 @@ class _FakeBridge:
 async def test_enrich_backfill_overrides_typed_device_with_preset(monkeypatch):
     from server.services.scan_service import ScanService
 
-    # 60:a3:e3 already typed "Gateway" by the IP heuristic — but topology.json
-    # preset says it's the TP-LINK switch. The preset must win on backfill.
+    # 8c:22:d2 already typed "Gateway" by a heuristic — but topology.json
+    # preset says it's a Hikvision camera. The preset must win on backfill.
+    # (不再用 60:a3:e3/TP-LINK：该 MAC 已被 VM OpenWrt 网关复用，注册表身份权威、
+    #  enrich 阶段跳过 VM 设备 —— 见 scan_service._vm_registry_macs。)
     fake_bridge = _FakeBridge(devices=[{
-        "devMac": "60:a3:e3:61:81:0f", "devLastIP": "192.168.1.1",
+        "devMac": "8c:22:d2:41:09:08", "devLastIP": "192.168.1.11",
         "devType": "Gateway", "devDiscoveryMethod": "nmap_sn",
     }])
     monkeypatch.setattr("server.services.nx_bridge.get_bridge", lambda: fake_bridge)
@@ -75,9 +77,9 @@ async def test_enrich_backfill_overrides_typed_device_with_preset(monkeypatch):
 
     assert len(fake_bridge.upserts) == 1
     mac, data, source = fake_bridge.upserts[0]
-    assert mac == "60:a3:e3:61:81:0f"
-    assert data["devName"] == "TL-SG2210LPF"
-    assert data["devType"] == "switch"
+    assert mac == "8c:22:d2:41:09:08"
+    assert data["devName"] == "DS-2CD1023G2-L-01"
+    assert data["devType"] == "camera"
     assert source == "PROFILE"
 
 
