@@ -98,6 +98,15 @@ async def trigger_isolate(body: dict):
         device_id = get_device_id_by_ip(device_ip)
 
     if not device_id:
+        # VM 实验场设备不在 topology.json —— 直接按 IP 处理（tap 隔离）
+        try:
+            from ..services.vm_isolator import vm_device_tap
+            if device_ip and vm_device_tap(device_ip) is not None:
+                device_id = "vm-lab-device"
+        except Exception:
+            pass
+
+    if not device_id:
         return JSONResponse({"error": "device not found", "device_ip": device_ip}, status_code=404)
 
     dev = get_device(device_id)
@@ -247,6 +256,15 @@ async def trigger_restore(body: dict):
     if not device_id and device_ip:
         from ..services.topology_service import get_device_id_by_ip
         device_id = get_device_id_by_ip(device_ip)
+
+    if not device_id:
+        # VM 实验场设备不在 topology.json —— 直接按 IP 处理（tap 恢复）
+        try:
+            from ..services.vm_isolator import vm_device_tap
+            if device_ip and vm_device_tap(device_ip) is not None:
+                device_id = "vm-lab-device"
+        except Exception:
+            pass
 
     if not device_id:
         return JSONResponse({"error": "device not found"}, status_code=404)
