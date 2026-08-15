@@ -182,13 +182,15 @@ def _load_vm_lab_config() -> dict:
         return {}
 
 
-def _vm_registry_macs() -> set[str]:
-    """VM 实验场注册表 MAC 集合（小写）。这些设备的身份由注册表权威给出，
-    enrich 阶段跳过端口探测与 topology 档案覆写（否则 OpenWrt 网关会因复用
-    旧交换机 MAC 被改回 'TL-SG2210LPF'）。"""
+def _vm_registry_identities() -> dict[str, dict]:
+    """VM 实验场注册表 mac(小写)→身份字典（含 name/model/vendor/type）。"""
     cfg = _load_vm_lab_config()
-    return {(d.get("mac") or "").strip().lower()
-            for d in (cfg.get("devices") or {}).values() if d.get("mac")}
+    out: dict[str, dict] = {}
+    for d in (cfg.get("devices") or {}).values():
+        mac = (d.get("mac") or "").strip().lower()
+        if mac:
+            out[mac] = d
+    return out
 
 
 def _http_fingerprint(host: str, port: int) -> dict:
@@ -594,17 +596,39 @@ class ScanService:
             # instant, no probe) vs a port-fingerprint probe.
             presets: list[tuple[str, dict]] = []
             probe_targets: dict[str, str] = {}
-            vm_macs = _vm_registry_macs()
+            vm_presets: list[tuple[str, dict]] = []
+            vm_ids = _vm_registry_identities()
+            source_of = {
+                d.get("devMac", ""): (d.get("devLastIPSource") or d.get("devSourcePlugin") or "")
+                for d in all_devs if isinstance(d, dict)
+            }
             for mac, ip in candidates.items():
-                if mac in vm_macs:
-                    # VM 实验场设备：注册表身份权威（含 pos/型号/固件），不做端口探测
-                    # （内网 IP 从物理机不可达，探测必超时）也不做 topology 档案覆写。
+                reg = vm_ids.get(mac)
+                if reg and source_of.get(mac) == "VMPORTMAP":
+                    # 场景二在线：注册表身份权威 —— 跳过端口探测（内网 IP 物理机
+                    # 不可达，探测必超时）与 topology 档案覆写，走 vm_presets 维护身份。
+                    vm_presets.append((mac, reg))
                     continue
+                # 注：注册表 MAC 但经物理 ARP 发现（场景一切回）→ 不跳过，走正常
+                # preset 路径恢复 topology 档案身份（如 60:a3:e3 复用 MAC：物理在线
+                # = TL-SG2210LPF 交换机，VM 在线 = OpenWrt 网关，身份跟随发现源）。
                 profile = match_device_profile(mac, ip)
                 if profile:
                     presets.append((mac, profile))
                 elif len(probe_targets) < _FP_CAP and mac not in self._fingerprinted:
                     probe_targets[mac] = ip
+
+            # 1a. VM 实验场注册表身份维护（场景二权威：名称/型号随注册表）。
+            for mac, reg in vm_presets:
+                try:
+                    await bridge.upsert_device(mac, {
+                        "devName": reg.get("name", ""),
+                        "devType": reg.get("type", "unknown"),
+                        "devVendor": reg.get("vendor", ""),
+                        "devModel": reg.get("model", ""),
+                    }, source="VMREGISTRY")
+                except Exception as e:
+                    logger.debug(f"vm preset upsert failed for {mac}: {e}")
 
             # 1. Apply known-device presets from topology.json (demo identity).
             for mac, profile in presets:
