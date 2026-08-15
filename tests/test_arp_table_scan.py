@@ -107,6 +107,8 @@ def test_sync_scan_does_not_fall_back_to_nmap_on_empty_arp_table(monkeypatch):
     import time
     svc = ss.ScanService()
     monkeypatch.setattr(ss, "_arp_table_scan", lambda subnet: [])
+    # VM 实验场端口映射扫描与本测试无关(且不应真连网络)，禁用之
+    monkeypatch.setattr(ss, "_load_vm_lab_config", lambda: {})
     nmap_calls = {"n": 0}
     real_check_output = ss.subprocess.check_output
 
