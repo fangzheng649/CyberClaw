@@ -88,6 +88,7 @@ class SuricataMonitor:
         }
         self._scapy_task: Optional[asyncio.Task] = None
         self._ssh_task: Optional[asyncio.Task] = None
+        self._incident_tasks: set = set()  # 研判 task 引用(防 GC 中断)
         self._scapy_stats = {
             "packet_count": 0,
             "by_protocol": {},
@@ -285,6 +286,16 @@ class SuricataMonitor:
                 asyncio.create_task(_update_fsm())
         except Exception:
             pass
+
+        # sev1/sev2 告警 → 智能体研判（事件驱动闭环入口；持 task 引用防 GC）
+        try:
+            if int(evt.severity) <= 2:
+                from .incident_agent import handle_alert_incident
+                task = asyncio.create_task(handle_alert_incident(raw))
+                self._incident_tasks.add(task)
+                task.add_done_callback(self._incident_tasks.discard)
+        except Exception as e:
+            logger.debug(f"incident dispatch failed: {e}")
 
     async def _try_scapy(self) -> bool:
         try:
